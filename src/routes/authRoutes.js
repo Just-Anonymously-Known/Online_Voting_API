@@ -1,14 +1,22 @@
 
 const express = require('express');
-const { register, login } = require('../controllers/authController');
+
+const {
+  register,
+  verifyEmail,
+  resendEmailCode,
+  login
+} = require('../controllers/authController');
+
 const { protect } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
 router.post('/register', register);
+router.post('/verify-email', verifyEmail);
+router.post('/resend-email-code', resendEmailCode);
 router.post('/login', login);
 
-// Temporary authentication test endpoint
 router.get('/me', protect, (req, res) => {
   res.status(200).json({
     success: true,

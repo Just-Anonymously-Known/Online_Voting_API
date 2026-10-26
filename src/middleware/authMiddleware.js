@@ -1,7 +1,8 @@
 
 const jwt = require('jsonwebtoken');
+const User = require('../models/User');
 
-const protect = (req, res, next) => {
+const protect = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
 
@@ -12,20 +13,54 @@ const protect = (req, res, next) => {
       });
     }
 
-    const token = authHeader.split(' ')[1];
+    const token = authHeader.slice(7).trim();
+
+    if (!token || !process.env.JWT_SECRET) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid or expired token'
+      });
+    }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
+    if (!decoded.userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid or expired token'
+      });
+    }
+
+    const user = await User.findById(decoded.userId).select('_id role isActive');
+
+    if (!user || !user.isActive) {
+      return res.status(401).json({
+        success: false,
+        message: 'Account not found or inactive. Please log in again.'
+      });
+    }
+
     req.user = {
-      id: decoded.userId,
-      role: decoded.role
+      id: user._id.toString(),
+      role: user.role
     };
 
     next();
   } catch (error) {
-    return res.status(401).json({
+    if (error.name === 'JsonWebTokenError' ||
+        error.name === 'TokenExpiredError' ||
+        error.name === 'CastError') {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid or expired token'
+      });
+    }
+
+    console.error('Authentication error:', error.message);
+
+    return res.status(500).json({
       success: false,
-      message: 'Invalid or expired token'
+      message: 'Unable to authenticate request'
     });
   }
 };

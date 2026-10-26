@@ -18,10 +18,24 @@ const userSchema = new mongoose.Schema(
       trim: true
     },
 
+    phone: {
+      type: String,
+      required: [true, 'Phone number is required'],
+      unique: true,
+      trim: true
+    },
+
     password: {
       type: String,
       required: [true, 'Password is required'],
-      minlength: [8, 'Password must be at least 8 characters']
+      minlength: [12, 'Password must be at least 12 characters'],
+      validate: {
+        validator: function (password) {
+          return /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9\s])\S{12,}$/.test(password);
+        },
+        message:
+          'Password must be at least 12 characters and include uppercase, lowercase, a number, and a special character, with no spaces'
+      }
     },
 
     role: {
@@ -30,6 +44,40 @@ const userSchema = new mongoose.Schema(
       default: 'voter'
     },
 
+    // Verification status
+    emailVerified: {
+      type: Boolean,
+      default: false
+    },
+
+    phoneVerified: {
+      type: Boolean,
+      default: false
+    },
+
+    // Email OTP verification
+    emailVerificationCodeHash: {
+      type: String,
+      select: false
+    },
+
+    emailVerificationExpires: {
+      type: Date,
+      select: false
+    },
+
+    // Phone OTP verification (for future SMS integration)
+    phoneVerificationPinId: {
+      type: String,
+      select: false
+    },
+
+    phoneVerificationExpires: {
+      type: Date,
+      select: false
+    },
+
+    // Account status
     isActive: {
       type: Boolean,
       default: true
@@ -47,7 +95,7 @@ userSchema.pre('save', async function () {
   this.password = await bcrypt.hash(this.password, 12);
 });
 
-// Check a submitted password against the stored hash
+// Compare a submitted password with the stored hash
 userSchema.methods.comparePassword = async function (candidatePassword) {
   return bcrypt.compare(candidatePassword, this.password);
 };

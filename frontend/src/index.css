@@ -1,0 +1,80 @@
+
+:root {
+  font-family: 'DM Sans', 'Segoe UI', sans-serif;
+  color: #18251f;
+  background: #fbfcfa;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  color-scheme: light dark;
+
+  --page-bg: #fbfcfa;
+  --surface: #ffffff;
+  --text-primary: #18251f;
+  --text-secondary: #657169;
+  --border-color: #e5ebe4;
+  --brand-color: #176b4b;
+  --brand-hover: #10563b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: var(--page-bg);
+  color: var(--text-primary);
+}
+
+#root {
+  width: 100%;
+  min-height: 100vh;
+  margin: 0;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: inherit;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page-bg: #101713;
+    --surface: #18221c;
+    --text-primary: #edf5ef;
+    --text-secondary: #b0beb4;
+    --border-color: #304036;
+    --brand-color: #68c69a;
+    --brand-hover: #85d8ad;
+  }
+}
