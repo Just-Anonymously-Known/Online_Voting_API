@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import './Auth.css'
 
-const API_URL = 'http://localhost:5500/api/auth'
+const API_URL = 'https://ballottrust-api.onrender.com/api/auth'
 
 function Register() {
   const navigate = useNavigate()
