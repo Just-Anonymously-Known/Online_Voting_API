@@ -1,4 +1,3 @@
-
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import './AdminDashboard.css'
@@ -7,7 +6,6 @@ const API_URL = 'https://ballottrust-api.onrender.com/api'
 
 function formatDate(value) {
   if (!value) return 'Not specified'
-
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return 'Not specified'
 
@@ -33,6 +31,18 @@ function getStatus(election) {
   if (now < start) return 'scheduled'
 
   return status === 'active' ? 'active' : 'awaiting activation'
+}
+
+function initials(name = '') {
+  return (
+    name
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((part) => part[0] || '')
+      .join('')
+      .toUpperCase() || '?'
+  )
 }
 
 function AdminDashboard() {
@@ -127,20 +137,23 @@ function AdminDashboard() {
       const status = getStatus(election)
 
       if (status === 'active') stats.active += 1
+
       if (status === 'scheduled' || status === 'awaiting activation') {
         stats.scheduled += 1
       }
+
       if (status === 'completed') stats.completed += 1
     })
 
     return stats
   }, [elections])
 
-  const completedElections = useMemo(
+  const resultEligibleElections = useMemo(
     () =>
-      elections.filter(
-        (election) =>
-          String(election.status || '').toLowerCase() === 'completed'
+      elections.filter((election) =>
+        ['active', 'completed'].includes(
+          String(election.status || '').toLowerCase()
+        )
       ),
     [elections]
   )
@@ -292,11 +305,9 @@ function AdminDashboard() {
     setError('')
     setNotice('')
 
-    const confirmed = window.confirm(
-      `Change "${election.title}" to ${nextStatus}?`
-    )
-
-    if (!confirmed) return
+    if (!window.confirm(`Change "${election.title}" to ${nextStatus}?`)) {
+      return
+    }
 
     try {
       setSaving(true)
@@ -321,6 +332,10 @@ function AdminDashboard() {
 
       setNotice(data.message || `Election status changed to ${nextStatus}.`)
       await loadElections()
+
+      if (selectedResultsId === election._id && nextStatus === 'completed') {
+        await loadResults(election._id)
+      }
     } catch (err) {
       setError(err.message || 'Unable to update election status.')
     } finally {
@@ -336,384 +351,643 @@ function AdminDashboard() {
 
   return (
     <main className="admin-dashboard-page">
-      <header className="admin-dashboard-header">
-        <div className="admin-dashboard-brand">
+      <aside className="admin-sidebar">
+        <a
+          className="admin-sidebar-brand"
+          href="#overview"
+          aria-label="BallotTrust dashboard"
+        >
           <span className="admin-brand-icon">B</span>
-          <span>BallotTrust</span>
-          <span className="admin-role-label">Admin</span>
-        </div>
+          <span>
+            BallotTrust
+            <small>ADMIN CONSOLE</small>
+          </span>
+        </a>
 
-        <div className="admin-header-actions">
-          <button type="button" onClick={loadElections} disabled={loading}>
-            {loading ? 'Refreshing…' : 'Refresh'}
+        <p className="admin-nav-caption">WORKSPACE</p>
+
+        <nav className="admin-sidebar-nav" aria-label="Admin navigation">
+          <a className="is-active" href="#overview">
+            <span>▦</span>Dashboard
+          </a>
+          <a href="#elections">
+            <span>◷</span>Elections
+          </a>
+          <a href="#create-election">
+            <span>＋</span>Create election
+          </a>
+          <a href="#results">
+            <span>▤</span>Results
+          </a>
+        </nav>
+
+        <div className="admin-sidebar-bottom">
+          <div className="admin-profile">
+            <span className="admin-profile-avatar">A</span>
+            <span>
+              <strong>Administrator</strong>
+              <small>Election manager</small>
+            </span>
+          </div>
+
+          <button
+            className="admin-sidebar-logout"
+            type="button"
+            onClick={logout}
+          >
+            <span>↪</span>Log out
           </button>
-          <button type="button" onClick={logout}>
-            Log out
-          </button>
         </div>
-      </header>
+      </aside>
 
-      <section className="admin-dashboard-content">
-        <div className="admin-dashboard-intro">
-          <p className="admin-eyebrow">ADMINISTRATION</p>
-          <h1>Election management</h1>
-          <p>Monitor elections, manage candidates, and review certified results.</p>
-        </div>
-
-        {error && (
-          <div className="admin-alert admin-alert-error" role="alert">
-            {error}
-          </div>
-        )}
-
-        {notice && (
-          <div className="admin-alert admin-alert-success" role="status">
-            {notice}
-          </div>
-        )}
-
-        <section className="admin-stats-grid" aria-label="Election overview">
-          <article className="admin-stat-card">
-            <span className="admin-stat-label">Total elections</span>
-            <strong>{loading ? '—' : electionStats.total}</strong>
-            <span className="admin-stat-footnote">All recorded elections</span>
-          </article>
-          <article className="admin-stat-card">
-            <span className="admin-stat-label">Active</span>
-            <strong>{loading ? '—' : electionStats.active}</strong>
-            <span className="admin-stat-footnote">Currently running</span>
-          </article>
-          <article className="admin-stat-card">
-            <span className="admin-stat-label">Scheduled</span>
-            <strong>{loading ? '—' : electionStats.scheduled}</strong>
-            <span className="admin-stat-footnote">Upcoming elections</span>
-          </article>
-          <article className="admin-stat-card">
-            <span className="admin-stat-label">Completed</span>
-            <strong>{loading ? '—' : electionStats.completed}</strong>
-            <span className="admin-stat-footnote">Ready for results review</span>
-          </article>
-        </section>
-
-        <section className="admin-panel admin-results-panel">
-          <div className="admin-section-heading">
-            <div>
-              <p className="admin-eyebrow">RESULTS CENTRE</p>
-              <h2>Candidate vote breakdown</h2>
-              <p>Select a completed election to compare votes by position.</p>
-            </div>
+      <div className="admin-main">
+        <header className="admin-topbar">
+          <div className="admin-breadcrumb">
+            Workspace <span>/</span> Dashboard
           </div>
 
-          <label className="admin-results-select-label" htmlFor="results-election">
-            Select completed election
-            <select
-              id="results-election"
-              value={selectedResultsId}
-              onChange={(event) => loadResults(event.target.value)}
-              disabled={loading || completedElections.length === 0 || resultsLoading}
+          <div className="admin-header-actions">
+            <span className="admin-live-indicator">
+              <i /> System overview
+            </span>
+            <button
+              className="admin-button admin-button-secondary"
+              type="button"
+              onClick={loadElections}
+              disabled={loading}
             >
-              <option value="">Choose an election</option>
-              {completedElections.map((election) => (
-                <option key={election._id} value={election._id}>
-                  {election.title}
-                </option>
-              ))}
-            </select>
-          </label>
+              <span aria-hidden="true">↻</span>
+              {loading ? 'Refreshing…' : 'Refresh'}
+            </button>
+          </div>
+        </header>
 
-          {completedElections.length === 0 && !loading && (
-            <p className="admin-empty-state">
-              No completed elections yet. Results become available after an
-              election is completed.
-            </p>
-          )}
+        <div className="admin-dashboard-content" id="overview">
+          <section className="admin-dashboard-intro">
+            <div>
+              <p className="admin-eyebrow">OVERVIEW</p>
+              <h1>Good day, Administrator</h1>
+              <p>Here’s what’s happening across your elections.</p>
+            </div>
 
-          {resultsLoading && (
-            <p className="admin-empty-state" role="status">
-              Loading candidate results…
-            </p>
-          )}
+            <a
+              className="admin-button admin-button-primary"
+              href="#create-election"
+            >
+              <span>＋</span> Create election
+            </a>
+          </section>
 
-          {resultsError && (
+          {error && (
             <div className="admin-alert admin-alert-error" role="alert">
-              {resultsError}
+              {error}
             </div>
           )}
 
-          {resultsData && !resultsLoading && (
-            <>
-              <div className="admin-results-summary">
+          {notice && (
+            <div className="admin-alert admin-alert-success" role="status">
+              {notice}
+            </div>
+          )}
+
+          <section className="admin-stats-grid" aria-label="Election overview">
+            <article className="admin-stat-card">
+              <div className="admin-stat-top">
+                <span className="admin-stat-icon icon-green">▦</span>
+                <span className="admin-stat-kicker">ALL RECORDS</span>
+              </div>
+              <span className="admin-stat-label">Total elections</span>
+              <strong>{loading ? '—' : electionStats.total}</strong>
+              <span className="admin-stat-footnote">All recorded elections</span>
+            </article>
+
+            <article className="admin-stat-card">
+              <div className="admin-stat-top">
+                <span className="admin-stat-icon icon-blue">◉</span>
+                <span className="admin-stat-kicker">LIVE NOW</span>
+              </div>
+              <span className="admin-stat-label">Active elections</span>
+              <strong>{loading ? '—' : electionStats.active}</strong>
+              <span className="admin-stat-footnote">Currently running</span>
+            </article>
+
+            <article className="admin-stat-card">
+              <div className="admin-stat-top">
+                <span className="admin-stat-icon icon-amber">◷</span>
+                <span className="admin-stat-kicker">UP NEXT</span>
+              </div>
+              <span className="admin-stat-label">Scheduled</span>
+              <strong>{loading ? '—' : electionStats.scheduled}</strong>
+              <span className="admin-stat-footnote">Upcoming elections</span>
+            </article>
+
+            <article className="admin-stat-card">
+              <div className="admin-stat-top">
+                <span className="admin-stat-icon icon-purple">✓</span>
+                <span className="admin-stat-kicker">CLOSED</span>
+              </div>
+              <span className="admin-stat-label">Completed</span>
+              <strong>{loading ? '—' : electionStats.completed}</strong>
+              <span className="admin-stat-footnote">Ready for final review</span>
+            </article>
+          </section>
+
+          <section className="admin-overview-grid">
+            <article className="admin-panel admin-status-panel">
+              <div className="admin-section-heading">
                 <div>
-                  <span className="admin-stat-label">Election</span>
-                  <strong>{resultsData.election?.title || 'Election results'}</strong>
+                  <p className="admin-eyebrow">ELECTION HEALTH</p>
+                  <h2>Election status</h2>
                 </div>
-                <span className="admin-status admin-status-completed">
-                  Completed
-                </span>
               </div>
 
-              {Array.isArray(resultsData.results) &&
-              resultsData.results.length > 0 ? (
-                <>
-                  <label className="admin-results-select-label" htmlFor="results-position">
-                    Position
-                    <select
-                      id="results-position"
-                      value={selectedPositionId}
-                      onChange={(event) => setSelectedPositionId(event.target.value)}
+              <div className="admin-status-visual">
+                <div
+                  className="admin-status-ring"
+                  style={{
+                    '--active': electionStats.total
+                      ? (electionStats.active / electionStats.total) * 100
+                      : 0,
+                  }}
+                >
+                  <div>
+                    <strong>{loading ? '—' : electionStats.total}</strong>
+                    <span>Total</span>
+                  </div>
+                </div>
+
+                <div className="admin-status-legend">
+                  <span>
+                    <i className="legend-active" />Active
+                    <strong>{electionStats.active}</strong>
+                  </span>
+                  <span>
+                    <i className="legend-scheduled" />Scheduled
+                    <strong>{electionStats.scheduled}</strong>
+                  </span>
+                  <span>
+                    <i className="legend-completed" />Completed
+                    <strong>{electionStats.completed}</strong>
+                  </span>
+                  <span>
+                    <i className="legend-other" />Other
+                    <strong>
+                      {Math.max(
+                        0,
+                        electionStats.total -
+                          electionStats.active -
+                          electionStats.scheduled -
+                          electionStats.completed
+                      )}
+                    </strong>
+                  </span>
+                </div>
+              </div>
+
+              <p className="admin-panel-note">
+                Status totals are calculated from elections returned by the API.
+              </p>
+            </article>
+
+            <article className="admin-panel admin-quick-panel">
+              <div className="admin-section-heading">
+                <div>
+                  <p className="admin-eyebrow">SHORTCUTS</p>
+                  <h2>Quick actions</h2>
+                </div>
+              </div>
+
+              <a className="admin-quick-action" href="#create-election">
+                <span className="quick-action-icon">＋</span>
+                <span>
+                  <strong>Create an election</strong>
+                  <small>Set up a new voting event</small>
+                </span>
+                <b>→</b>
+              </a>
+
+              <a className="admin-quick-action" href="#elections">
+                <span className="quick-action-icon">☷</span>
+                <span>
+                  <strong>Manage elections</strong>
+                  <small>Update status and candidates</small>
+                </span>
+                <b>→</b>
+              </a>
+
+              <a className="admin-quick-action" href="#results">
+                <span className="quick-action-icon">▤</span>
+                <span>
+                  <strong>Review results</strong>
+                  <small>Compare candidate vote totals</small>
+                </span>
+                <b>→</b>
+              </a>
+            </article>
+          </section>
+
+          <section className="admin-panel admin-results-panel" id="results">
+            <div className="admin-section-heading">
+              <div>
+                <p className="admin-eyebrow">RESULTS CENTRE</p>
+                <h2>Candidate vote breakdown</h2>
+                <p>Review results by election and position.</p>
+              </div>
+            </div>
+
+            <label
+              className="admin-results-select-label"
+              htmlFor="results-election"
+            >
+              Select election
+              <select
+                id="results-election"
+                value={selectedResultsId}
+                onChange={(event) => loadResults(event.target.value)}
+                disabled={
+                  loading ||
+                  resultEligibleElections.length === 0 ||
+                  resultsLoading
+                }
+              >
+                <option value="">Choose an election</option>
+                {resultEligibleElections.map((election) => (
+                  <option key={election._id} value={election._id}>
+                    {election.title} — {String(election.status).toLowerCase()}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {resultEligibleElections.length === 0 && !loading && (
+              <p className="admin-empty-state">
+                There are no active or completed elections to display yet.
+              </p>
+            )}
+
+            {resultsLoading && (
+              <p className="admin-empty-state" role="status">
+                Loading candidate results…
+              </p>
+            )}
+
+            {resultsError && (
+              <div className="admin-alert admin-alert-error" role="alert">
+                {resultsError}
+              </div>
+            )}
+
+            {resultsData && !resultsLoading && (
+              <>
+                <div className="admin-results-summary">
+                  <div>
+                    <span className="admin-stat-label">Selected election</span>
+                    <strong>
+                      {resultsData.election?.title || 'Election results'}
+                    </strong>
+                  </div>
+
+                  <span
+                    className={`admin-status ${
+                      String(resultsData.election?.status).toLowerCase() ===
+                      'completed'
+                        ? 'admin-status-completed'
+                        : 'admin-status-active'
+                    }`}
+                  >
+                    {String(resultsData.election?.status).toLowerCase() ===
+                    'completed'
+                      ? 'Final results'
+                      : 'Provisional results'}
+                  </span>
+                </div>
+
+                {Array.isArray(resultsData.results) &&
+                resultsData.results.length > 0 ? (
+                  <>
+                    <label
+                      className="admin-results-select-label"
+                      htmlFor="results-position"
                     >
-                      {resultsData.results.map((position) => (
-                        <option
-                          key={position.positionId}
-                          value={String(position.positionId)}
-                        >
-                          {position.positionTitle}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                      Position
+                      <select
+                        id="results-position"
+                        value={selectedPositionId}
+                        onChange={(event) =>
+                          setSelectedPositionId(event.target.value)
+                        }
+                      >
+                        {resultsData.results.map((position) => (
+                          <option
+                            key={position.positionId}
+                            value={String(position.positionId)}
+                          >
+                            {position.positionTitle}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
 
-                  {selectedPosition && (
-                    <div className="admin-position-results">
-                      <div className="admin-results-heading">
-                        <div>
-                          <h3>{selectedPosition.positionTitle}</h3>
-                          <p>Votes received by each candidate</p>
+                    {selectedPosition && (
+                      <div className="admin-position-results">
+                        <div className="admin-results-heading">
+                          <div>
+                            <h3>{selectedPosition.positionTitle}</h3>
+                            <p>Votes received by each candidate</p>
+                          </div>
+
+                          <div className="admin-position-total">
+                            <strong>
+                              {positionCandidates.totalVotes.toLocaleString()}
+                            </strong>
+                            <span>Total votes</span>
+                          </div>
                         </div>
-                        <div className="admin-position-total">
-                          <strong>
-                            {positionCandidates.totalVotes.toLocaleString()}
-                          </strong>
-                          <span>Total votes</span>
-                        </div>
-                      </div>
 
-                      {positionCandidates.candidates.length === 0 ? (
-                        <p className="admin-empty-state">
-                          No candidates were found for this position.
-                        </p>
-                      ) : (
-                        <div className="admin-candidate-results">
-                          {positionCandidates.candidates.map((candidate, index) => (
-                            <article
-                              className="admin-candidate-result"
-                              key={String(candidate.candidateId)}
-                            >
-                              <div className="admin-candidate-info">
-                                {candidate.photoUrl ? (
-                                  <img
-                                    className="admin-candidate-photo"
-                                    src={candidate.photoUrl}
-                                    alt=""
-                                    loading="lazy"
-                                  />
-                                ) : (
-                                  <span className="admin-candidate-avatar" aria-hidden="true">
-                                    {(candidate.name || '?').trim().charAt(0).toUpperCase()}
-                                  </span>
-                                )}
-
-                                <div className="admin-candidate-name">
-                                  <strong>{candidate.name}</strong>
-                                  <span>
-                                    {candidate.votes.toLocaleString()} votes
-                                  </span>
-                                </div>
-                              </div>
-
-                              <div className="admin-candidate-chart">
-                                <div
-                                  className="admin-candidate-bar-track"
-                                  role="img"
-                                  aria-label={`${candidate.name}: ${candidate.votes} votes, ${candidate.percentage.toFixed(1)} percent`}
+                        {positionCandidates.candidates.length === 0 ? (
+                          <p className="admin-empty-state">
+                            No candidates were found for this position.
+                          </p>
+                        ) : (
+                          <div className="admin-candidate-results">
+                            {positionCandidates.candidates.map(
+                              (candidate, index) => (
+                                <article
+                                  className="admin-candidate-result"
+                                  key={String(candidate.candidateId)}
                                 >
+                                  <div className="admin-candidate-info">
+                                    {candidate.photoUrl ? (
+                                      <img
+                                        className="admin-candidate-photo"
+                                        src={candidate.photoUrl}
+                                        alt=""
+                                        loading="lazy"
+                                      />
+                                    ) : (
+                                      <span
+                                        className="admin-candidate-avatar"
+                                        aria-hidden="true"
+                                      >
+                                        {initials(candidate.name)}
+                                      </span>
+                                    )}
+
+                                    <div className="admin-candidate-name">
+                                      <strong>{candidate.name}</strong>
+                                      <span>
+                                        {candidate.votes.toLocaleString()} votes
+                                      </span>
+                                    </div>
+
+                                    <strong className="admin-candidate-percentage">
+                                      {candidate.percentage.toFixed(1)}%
+                                    </strong>
+                                  </div>
+
                                   <div
-                                    className={`admin-candidate-bar${index === 0 && candidate.votes > 0 ? ' admin-candidate-bar-leading' : ''}`}
-                                    style={{
-                                      width: `${candidate.percentage}%`,
-                                    }}
-                                  />
-                                </div>
-                                <strong className="admin-candidate-percentage">
-                                  {candidate.percentage.toFixed(1)}%
-                                </strong>
-                              </div>
-                            </article>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </>
-              ) : (
-                <p className="admin-empty-state">
-                  No positions were returned for this election.
-                </p>
-              )}
-            </>
-          )}
-        </section>
-
-        <section className="admin-panel">
-          <h2>Create an election</h2>
-          <p>New elections are created as drafts.</p>
-
-          <form onSubmit={createElection} className="admin-election-form">
-            <label>
-              Election title
-              <input
-                name="title"
-                value={form.title}
-                onChange={handleFormChange}
-                maxLength={150}
-                required
-                placeholder="e.g. Student Union Election 2027"
-              />
-            </label>
-
-            <label>
-              Description
-              <textarea
-                name="description"
-                value={form.description}
-                onChange={handleFormChange}
-                maxLength={2000}
-                rows={3}
-                placeholder="Describe the purpose of this election"
-              />
-            </label>
-
-            <div className="admin-date-grid">
-              <label>
-                Start date and time
-                <input
-                  type="datetime-local"
-                  name="startDate"
-                  value={form.startDate}
-                  onChange={handleFormChange}
-                  required
-                />
-              </label>
-
-              <label>
-                End date and time
-                <input
-                  type="datetime-local"
-                  name="endDate"
-                  value={form.endDate}
-                  onChange={handleFormChange}
-                  required
-                />
-              </label>
-            </div>
-
-            <button type="submit" disabled={saving}>
-              {saving ? 'Saving…' : 'Create draft election'}
-            </button>
-          </form>
-        </section>
-
-        <section className="admin-panel">
-          <div className="admin-section-heading">
-            <div>
-              <h2>Existing elections</h2>
-              <p>{elections.length} election(s) found</p>
-            </div>
-          </div>
-
-          {loading ? (
-            <p role="status">Loading elections…</p>
-          ) : elections.length === 0 ? (
-            <p className="admin-empty-state">No elections found.</p>
-          ) : (
-            <div className="admin-election-list">
-              {elections.map((election) => {
-                const status = getStatus(election)
-
-                return (
-                  <article className="admin-election-card" key={election._id}>
-                    <div className="admin-election-card-top">
-                      <div>
-                        <h3>{election.title}</h3>
-                        <p>{election.description || 'No description provided.'}</p>
+                                    className="admin-candidate-bar-track"
+                                    role="img"
+                                    aria-label={`${candidate.name}: ${candidate.votes} votes, ${candidate.percentage.toFixed(1)} percent`}
+                                  >
+                                    <div
+                                      className={`admin-candidate-bar${
+                                        index === 0 && candidate.votes > 0
+                                          ? ' admin-candidate-bar-leading'
+                                          : ''
+                                      }`}
+                                      style={{
+                                        width: `${candidate.percentage}%`,
+                                      }}
+                                    />
+                                  </div>
+                                </article>
+                              )
+                            )}
+                          </div>
+                        )}
                       </div>
+                    )}
+                  </>
+                ) : (
+                  <p className="admin-empty-state">
+                    No positions were returned for this election.
+                  </p>
+                )}
+              </>
+            )}
+          </section>
 
-                      <span
-                        className={`admin-status admin-status-${status.replace(/\s+/g, '-')}`}
-                      >
-                        {status}
-                      </span>
-                    </div>
-
-                    <div className="admin-election-dates">
-                      <span>
-                        <strong>Starts:</strong> {formatDate(election.startDate)}
-                      </span>
-                      <span>
-                        <strong>Ends:</strong> {formatDate(election.endDate)}
-                      </span>
-                    </div>
-
-                    <div className="admin-election-actions">
-                      <button
-                        type="button"
-                        onClick={() => navigate(`/admin/elections/${election._id}`)}
-                      >
-                        Manage positions &amp; candidates
-                      </button>
-
-                      {String(election.status).toLowerCase() === 'draft' && (
-                        <button
-                          type="button"
-                          disabled={saving}
-                          onClick={() => updateStatus(election, 'scheduled')}
-                        >
-                          Schedule
-                        </button>
-                      )}
-
-                      {['scheduled', 'upcoming'].includes(
-                        String(election.status).toLowerCase()
-                      ) && (
-                        <button
-                          type="button"
-                          disabled={saving}
-                          onClick={() => updateStatus(election, 'active')}
-                        >
-                          Activate
-                        </button>
-                      )}
-
-                      {String(election.status).toLowerCase() === 'active' && (
-                        <button
-                          type="button"
-                          disabled={saving}
-                          onClick={() => updateStatus(election, 'completed')}
-                        >
-                          Complete
-                        </button>
-                      )}
-
-                      {!['completed', 'cancelled'].includes(
-                        String(election.status).toLowerCase()
-                      ) && (
-                        <button
-                          type="button"
-                          className="admin-button-danger"
-                          disabled={saving}
-                          onClick={() => updateStatus(election, 'cancelled')}
-                        >
-                          Cancel
-                        </button>
-                      )}
-                    </div>
-                  </article>
-                )
-              })}
+          <section className="admin-panel" id="create-election">
+            <div className="admin-section-heading">
+              <div>
+                <p className="admin-eyebrow">SET UP</p>
+                <h2>Create an election</h2>
+                <p>New elections are created as drafts.</p>
+              </div>
             </div>
-          )}
-        </section>
-      </section>
+
+            <form onSubmit={createElection} className="admin-election-form">
+              <label>
+                Election title
+                <input
+                  name="title"
+                  value={form.title}
+                  onChange={handleFormChange}
+                  maxLength={150}
+                  required
+                  placeholder="e.g. Student Union Election 2027"
+                />
+              </label>
+
+              <label>
+                Description
+                <textarea
+                  name="description"
+                  value={form.description}
+                  onChange={handleFormChange}
+                  maxLength={2000}
+                  rows={3}
+                  placeholder="Describe the purpose of this election"
+                />
+              </label>
+
+              <div className="admin-date-grid">
+                <label>
+                  Start date and time
+                  <input
+                    type="datetime-local"
+                    name="startDate"
+                    value={form.startDate}
+                    onChange={handleFormChange}
+                    required
+                  />
+                </label>
+
+                <label>
+                  End date and time
+                  <input
+                    type="datetime-local"
+                    name="endDate"
+                    value={form.endDate}
+                    onChange={handleFormChange}
+                    required
+                  />
+                </label>
+              </div>
+
+              <button
+                className="admin-button admin-button-primary"
+                type="submit"
+                disabled={saving}
+              >
+                {saving ? 'Saving…' : 'Create draft election'}
+              </button>
+            </form>
+          </section>
+
+          <section className="admin-panel" id="elections">
+            <div className="admin-section-heading admin-election-list-heading">
+              <div>
+                <p className="admin-eyebrow">MANAGEMENT</p>
+                <h2>Existing elections</h2>
+                <p>{elections.length} election(s) found</p>
+              </div>
+
+              <button
+                className="admin-button admin-button-secondary"
+                type="button"
+                onClick={loadElections}
+                disabled={loading}
+              >
+                {loading ? 'Loading…' : '↻ Refresh list'}
+              </button>
+            </div>
+
+            {loading ? (
+              <p role="status">Loading elections…</p>
+            ) : elections.length === 0 ? (
+              <p className="admin-empty-state">
+                No elections found. Create your first election above.
+              </p>
+            ) : (
+              <div className="admin-election-table-wrap">
+                <table className="admin-election-table">
+                  <thead>
+                    <tr>
+                      <th>Election</th>
+                      <th>Start date</th>
+                      <th>End date</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {elections.map((election) => {
+                      const status = getStatus(election)
+                      const rawStatus = String(
+                        election.status || ''
+                      ).toLowerCase()
+
+                      return (
+                        <tr key={election._id}>
+                          <td>
+                            <div className="admin-table-election">
+                              <strong>{election.title}</strong>
+                              <span>
+                                {election.description ||
+                                  'No description provided.'}
+                              </span>
+                            </div>
+                          </td>
+                          <td>{formatDate(election.startDate)}</td>
+                          <td>{formatDate(election.endDate)}</td>
+                          <td>
+                            <span
+                              className={`admin-status admin-status-${status.replace(/\s+/g, '-')}`}
+                            >
+                              {status}
+                            </span>
+                          </td>
+                          <td>
+                            <div className="admin-table-actions">
+                              <button
+                                className="admin-button admin-button-secondary"
+                                type="button"
+                                onClick={() =>
+                                  navigate(`/admin/elections/${election._id}`)
+                                }
+                              >
+                                Manage
+                              </button>
+
+                              {rawStatus === 'draft' && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateStatus(election, 'scheduled')
+                                  }
+                                  disabled={saving}
+                                >
+                                  Schedule
+                                </button>
+                              )}
+
+                              {['scheduled', 'upcoming'].includes(rawStatus) && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateStatus(election, 'active')
+                                  }
+                                  disabled={saving}
+                                >
+                                  Activate
+                                </button>
+                              )}
+
+                              {rawStatus === 'active' && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateStatus(election, 'completed')
+                                  }
+                                  disabled={saving}
+                                >
+                                  Complete
+                                </button>
+                              )}
+
+                              {!['completed', 'cancelled'].includes(
+                                rawStatus
+                              ) && (
+                                <button
+                                  className="admin-button-danger"
+                                  type="button"
+                                  onClick={() =>
+                                    updateStatus(election, 'cancelled')
+                                  }
+                                  disabled={saving}
+                                >
+                                  Cancel
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <footer className="admin-footer">
+            <span>BallotTrust Admin Console</span>
+            <span>Manage elections with confidence.</span>
+          </footer>
+        </div>
+      </div>
     </main>
   )
 }

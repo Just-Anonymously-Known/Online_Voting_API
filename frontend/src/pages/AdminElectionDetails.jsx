@@ -5,6 +5,17 @@ import './AdminElectionDetails.css'
 
 const API_URL = 'https://ballottrust-api.onrender.com/api'
 
+const emptyPositionForm = {
+  title: '',
+  description: '',
+  maxSelections: 1,
+}
+
+const emptyCandidateForm = {
+  name: '',
+  manifesto: '',
+}
+
 function AdminElectionDetails() {
   const { electionId } = useParams()
   const navigate = useNavigate()
@@ -14,34 +25,40 @@ function AdminElectionDetails() {
   const [positions, setPositions] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [editingId, setEditingId] = useState(null)
+  const [deletingId, setDeletingId] = useState(null)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
   const [positionForm, setPositionForm] = useState({
-    title: '',
-    description: '',
+    ...emptyPositionForm,
   })
 
   const [candidateForms, setCandidateForms] = useState({})
 
-  const request = useCallback(async (path, options = {}) => {
-    const response = await fetch(`${API_URL}${path}`, {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...options.headers,
-      },
-    })
+  const request = useCallback(
+    async (path, options = {}) => {
+      const response = await fetch(`${API_URL}${path}`, {
+        ...options,
+        headers: {
+          ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...options.headers,
+        },
+      })
 
-    const data = await response.json().catch(() => ({}))
+      const data = await response.json().catch(() => ({}))
 
-    if (!response.ok) {
-      throw new Error(data.message || data.error || 'Request failed.')
-    }
+      if (!response.ok) {
+        throw new Error(
+          data.message || data.error || `Request failed (${response.status}).`,
+        )
+      }
 
-    return data
-  }, [token])
+      return data
+    },
+    [token],
+  )
 
   const loadElection = useCallback(async () => {
     setLoading(true)
@@ -50,15 +67,16 @@ function AdminElectionDetails() {
     try {
       const [electionData, positionsData] = await Promise.all([
         request(`/elections/${electionId}`),
-        request(`/elections/${electionId}/positions`),
+        request(`/positions/election/${electionId}`),
       ])
 
       setElection(electionData.election || electionData)
-      setPositions(
-        Array.isArray(positionsData)
-          ? positionsData
-          : positionsData.positions || []
-      )
+
+      const receivedPositions = Array.isArray(positionsData)
+        ? positionsData
+        : positionsData.positions || []
+
+      setPositions(receivedPositions)
     } catch (err) {
       setError(err.message || 'Could not load election details.')
     } finally {
@@ -90,28 +108,112 @@ function AdminElectionDetails() {
   }, [navigate])
 
   useEffect(() => {
-    if (token) loadElection()
-  }, [token, loadElection])
+    if (token && electionId) {
+      loadElection()
+    }
+  }, [token, electionId, loadElection])
 
-  async function handleAddPosition(event) {
+  function resetPositionForm() {
+    setPositionForm({ ...emptyPositionForm })
+    setEditingId(null)
+  }
+
+  async function handlePositionSubmit(event) {
     event.preventDefault()
     setError('')
     setMessage('')
     setSaving(true)
 
     try {
-      await request(`/elections/${electionId}/positions`, {
-        method: 'POST',
-        body: JSON.stringify(positionForm),
-      })
+      const payload = {
+        title: positionForm.title.trim(),
+        description: positionForm.description.trim(),
+        maxSelections: Number(positionForm.maxSelections),
+      }
 
-      setPositionForm({ title: '', description: '' })
-      setMessage('Position added successfully.')
+      if (!payload.title) {
+        throw new Error('Position title is required.')
+      }
+
+      if (
+        !Number.isInteger(payload.maxSelections) ||
+        payload.maxSelections < 1
+      ) {
+        throw new Error('Maximum selections must be a positive whole number.')
+      }
+
+      if (editingId) {
+        await request(`/positions/${editingId}`, {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+        })
+
+        setMessage('Position updated successfully.')
+      } else {
+        await request(`/positions/election/${electionId}`, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        })
+
+        setMessage('Position created successfully.')
+      }
+
+      resetPositionForm()
       await loadElection()
     } catch (err) {
-      setError(err.message || 'Could not add position.')
+      setError(err.message || 'Could not save position.')
     } finally {
       setSaving(false)
+    }
+  }
+
+  function handleEditPosition(position) {
+    setEditingId(position._id || position.id)
+    setPositionForm({
+      title: position.title || '',
+      description: position.description || '',
+      maxSelections: position.maxSelections ?? 1,
+    })
+
+    setError('')
+    setMessage('')
+
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  async function handleDeletePosition(position) {
+    const positionId = position._id || position.id
+
+    if (!positionId) {
+      setError('This position does not have a valid ID.')
+      return
+    }
+
+    const confirmed = window.confirm(
+      `Delete "${position.title}"? This cannot be undone.`,
+    )
+
+    if (!confirmed) return
+
+    setError('')
+    setMessage('')
+    setDeletingId(positionId)
+
+    try {
+      await request(`/positions/${positionId}`, {
+        method: 'DELETE',
+      })
+
+      if (editingId === positionId) {
+        resetPositionForm()
+      }
+
+      setMessage('Position deleted successfully.')
+      await loadElection()
+    } catch (err) {
+      setError(err.message || 'Could not delete position.')
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -122,22 +224,29 @@ function AdminElectionDetails() {
     setSaving(true)
 
     const form = candidateForms[positionId] || {
-      name: '',
-      manifesto: '',
+      ...emptyCandidateForm,
     }
 
     try {
+      /*
+       * Preserves your existing candidate endpoint.
+       * This endpoint must exist in your backend for candidate creation
+       * to work.
+       */
       await request(
         `/elections/${electionId}/positions/${positionId}/candidates`,
         {
           method: 'POST',
-          body: JSON.stringify(form),
-        }
+          body: JSON.stringify({
+            name: form.name.trim(),
+            manifesto: form.manifesto.trim(),
+          }),
+        },
       )
 
       setCandidateForms((current) => ({
         ...current,
-        [positionId]: { name: '', manifesto: '' },
+        [positionId]: { ...emptyCandidateForm },
       }))
 
       setMessage('Candidate added successfully.')
@@ -153,8 +262,7 @@ function AdminElectionDetails() {
     setCandidateForms((current) => ({
       ...current,
       [positionId]: {
-        name: '',
-        manifesto: '',
+        ...emptyCandidateForm,
         ...current[positionId],
         [field]: value,
       },
@@ -172,13 +280,23 @@ function AdminElectionDetails() {
   if (!election) {
     return (
       <main className="admin-election-page">
-        <button onClick={() => navigate('/admin/dashboard')}>
-          Back to dashboard
+        <button
+          className="back-button"
+          onClick={() => navigate('/admin/dashboard')}
+        >
+          ← Back to dashboard
         </button>
-        <p className="error-message">{error || 'Election not found.'}</p>
+        <p className="notice error-message">
+          {error || 'Election not found.'}
+        </p>
       </main>
     )
   }
+
+  const electionStatus = election.effectiveStatus || election.status || 'Unknown'
+  const canManagePositions = ['draft', 'scheduled'].includes(
+    String(electionStatus).toLowerCase(),
+  )
 
   return (
     <main className="admin-election-page">
@@ -191,54 +309,105 @@ function AdminElectionDetails() {
 
       <header className="admin-election-header">
         <p className="eyebrow">BALLOTTRUST ADMIN</p>
-        <h1>{election.title}</h1>
+        <h1>{election.title || 'Election details'}</h1>
         <p>{election.description || 'No description provided.'}</p>
         <p>
-          Status: <strong>{election.effectiveStatus || election.status}</strong>
+          Status: <strong>{electionStatus}</strong>
         </p>
       </header>
 
-      {error && <div className="notice error-message">{error}</div>}
-      {message && <div className="notice success-message">{message}</div>}
+      {error && (
+        <div className="notice error-message" role="alert">
+          {error}
+        </div>
+      )}
+
+      {message && (
+        <div className="notice success-message" role="status">
+          {message}
+        </div>
+      )}
 
       <section className="admin-section">
-        <h2>Add a position</h2>
-        <form onSubmit={handleAddPosition} className="admin-form">
-          <label>
-            Position title
-            <input
-              type="text"
-              value={positionForm.title}
-              onChange={(event) =>
-                setPositionForm((current) => ({
-                  ...current,
-                  title: event.target.value,
-                }))
-              }
-              placeholder="e.g. President"
-              required
-            />
-          </label>
+        <h2>{editingId ? 'Edit position' : 'Add a position'}</h2>
 
-          <label>
-            Description
-            <textarea
-              value={positionForm.description}
-              onChange={(event) =>
-                setPositionForm((current) => ({
-                  ...current,
-                  description: event.target.value,
-                }))
-              }
-              placeholder="Describe the position (optional)"
-              rows="3"
-            />
-          </label>
+        {!canManagePositions ? (
+          <p>
+            Positions can only be created or edited while the election is in
+            draft or scheduled status.
+          </p>
+        ) : (
+          <form onSubmit={handlePositionSubmit} className="admin-form">
+            <label>
+              Position title
+              <input
+                type="text"
+                value={positionForm.title}
+                onChange={(event) =>
+                  setPositionForm((current) => ({
+                    ...current,
+                    title: event.target.value,
+                  }))
+                }
+                placeholder="e.g. President"
+                maxLength={100}
+                required
+              />
+            </label>
 
-          <button type="submit" disabled={saving}>
-            {saving ? 'Saving...' : 'Add position'}
-          </button>
-        </form>
+            <label>
+              Description
+              <textarea
+                value={positionForm.description}
+                onChange={(event) =>
+                  setPositionForm((current) => ({
+                    ...current,
+                    description: event.target.value,
+                  }))
+                }
+                placeholder="Describe the position (optional)"
+                maxLength={500}
+                rows={3}
+              />
+            </label>
+
+            <label>
+              Maximum selections
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={positionForm.maxSelections}
+                onChange={(event) =>
+                  setPositionForm((current) => ({
+                    ...current,
+                    maxSelections: event.target.value,
+                  }))
+                }
+                required
+              />
+            </label>
+
+            <button type="submit" disabled={saving}>
+              {saving
+                ? 'Saving...'
+                : editingId
+                  ? 'Save changes'
+                  : 'Add position'}
+            </button>
+
+            {editingId && (
+              <button
+                type="button"
+                className="back-button"
+                disabled={saving}
+                onClick={resetPositionForm}
+              >
+                Cancel editing
+              </button>
+            )}
+          </form>
+        )}
       </section>
 
       <section className="admin-section">
@@ -250,25 +419,56 @@ function AdminElectionDetails() {
           <div className="positions-list">
             {positions.map((position) => {
               const positionId = position._id || position.id
-              const candidates = position.candidates || []
+              const candidates = Array.isArray(position.candidates)
+                ? position.candidates
+                : []
 
               return (
                 <article className="position-card" key={positionId}>
-                  <h3>{position.title || position.name}</h3>
+                  <h3>{position.title || 'Untitled position'}</h3>
+
                   {position.description && <p>{position.description}</p>}
+
+                  <p>
+                    Maximum selections:{' '}
+                    <strong>{position.maxSelections ?? 1}</strong>
+                  </p>
+
+                  {canManagePositions && (
+                    <div className="position-actions">
+                      <button
+                        type="button"
+                        onClick={() => handleEditPosition(position)}
+                        disabled={saving || deletingId === positionId}
+                      >
+                        Edit position
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDeletePosition(position)}
+                        disabled={saving || deletingId === positionId}
+                      >
+                        {deletingId === positionId
+                          ? 'Deleting...'
+                          : 'Delete position'}
+                      </button>
+                    </div>
+                  )}
 
                   <h4>Candidates</h4>
 
                   {candidates.length === 0 ? (
-                    <p>No candidates listed for this position yet.</p>
+                    <p>
+                      Candidate records are not included in the current
+                      positions response.
+                    </p>
                   ) : (
                     <ul>
                       {candidates.map((candidate) => (
                         <li key={candidate._id || candidate.id}>
                           <strong>{candidate.name}</strong>
-                          {candidate.manifesto && (
-                            <p>{candidate.manifesto}</p>
-                          )}
+                          {candidate.manifesto && <p>{candidate.manifesto}</p>}
                         </li>
                       ))}
                     </ul>
@@ -291,10 +491,11 @@ function AdminElectionDetails() {
                           updateCandidateForm(
                             positionId,
                             'name',
-                            event.target.value
+                            event.target.value,
                           )
                         }
                         placeholder="Full name"
+                        maxLength={120}
                         required
                       />
                     </label>
@@ -307,11 +508,12 @@ function AdminElectionDetails() {
                           updateCandidateForm(
                             positionId,
                             'manifesto',
-                            event.target.value
+                            event.target.value,
                           )
                         }
                         placeholder="Candidate's manifesto (optional)"
-                        rows="3"
+                        maxLength={3000}
+                        rows={3}
                       />
                     </label>
 

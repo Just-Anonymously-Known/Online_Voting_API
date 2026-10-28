@@ -4,6 +4,8 @@ const cors = require('cors');
 
 const authRoutes = require('./routes/authRoutes');
 const electionRoutes = require('./routes/electionRoutes');
+const positionRoutes = require('./routes/positionRoutes');
+const candidateRoutes = require('./routes/candidateRoutes');
 const voteRoutes = require('./routes/voteRoutes');
 const resultRoutes = require('./routes/resultRoutes');
 
@@ -11,7 +13,7 @@ const app = express();
 
 const allowedOrigins = [
   'http://localhost:5173',
-  process.env.FRONTEND_URL,
+  process.env.FRONTEND_URL
 ].filter(Boolean);
 
 // Middleware
@@ -23,7 +25,7 @@ app.use(
       }
 
       return callback(new Error('Origin not allowed by CORS'));
-    },
+    }
   })
 );
 
@@ -33,15 +35,21 @@ app.use(express.json({ limit: '10kb' }));
 app.get('/api/health', (req, res) => {
   return res.status(200).json({
     success: true,
-    message: 'Online Voting System API is running',
+    message: 'Online Voting System API is running'
   });
 });
 
 // Authentication routes
 app.use('/api/auth', authRoutes);
 
-// Election and position routes
+// Candidate routes must be registered before the general election router
+app.use('/api/elections', candidateRoutes);
+
+// Election routes
 app.use('/api/elections', electionRoutes);
+
+// Position routes
+app.use('/api/positions', positionRoutes);
 
 // Voting routes
 app.use('/api/votes', voteRoutes);
@@ -53,7 +61,7 @@ app.use('/api/results', resultRoutes);
 app.use((req, res) => {
   return res.status(404).json({
     success: false,
-    message: 'Route not found',
+    message: 'Route not found'
   });
 });
 

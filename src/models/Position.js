@@ -7,7 +7,7 @@ const positionSchema = new mongoose.Schema(
       type: String,
       required: [true, 'Position title is required'],
       trim: true,
-      maxlength: [100, 'Position title cannot exceed 100 characters']
+      maxlength: [150, 'Position title cannot exceed 150 characters']
     },
     description: {
       type: String,
