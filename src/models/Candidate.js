@@ -20,6 +20,24 @@ const candidateSchema = new mongoose.Schema(
       trim: true,
       default: ''
     },
+    flyerUrl: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+    manifestoImages: {
+      type: [{
+        type: String,
+        trim: true
+      }],
+      default: [],
+      validate: {
+        validator: function (images) {
+          return images.length <= 5;
+        },
+        message: 'A maximum of 5 manifesto images is allowed'
+      }
+    },
     position: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Position',

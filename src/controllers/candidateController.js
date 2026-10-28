@@ -1,15 +1,51 @@
 
 const mongoose = require('mongoose');
+const { Readable } = require('stream');
+
 const Candidate = require('../models/Candidate');
 const Position = require('../models/Position');
 const Election = require('../models/election');
 const User = require('../models/User');
+const cloudinary = require('../config/cloudinary');
 
-// Admin: create a candidate for a position
+const uploadImage = (file, folder) =>
+  new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        folder,
+        resource_type: 'image'
+      },
+      (error, result) => {
+        if (error) return reject(error);
+
+        resolve({
+          url: result.secure_url,
+          publicId: result.public_id
+        });
+      }
+    );
+
+    Readable.from(file.buffer).pipe(uploadStream);
+  });
+
+const removeUploadedImages = async (images) => {
+  await Promise.allSettled(
+    images.map((image) =>
+      cloudinary.uploader.destroy(image.publicId, {
+        resource_type: 'image'
+      })
+    )
+  );
+};
+
+// Admin: create a candidate with optional media
 const createCandidate = async (req, res) => {
+  const uploadedImages = [];
+
   try {
-    const { name, manifesto, photoUrl } = req.body || {};
+    const { name, manifesto } = req.body || {};
     const { electionId, positionId } = req.params;
+    const files = req.files || {};
 
     if (
       !mongoose.isValidObjectId(electionId) ||
@@ -32,6 +68,16 @@ const createCandidate = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Candidate name cannot exceed 120 characters'
+      });
+    }
+
+    if (
+      typeof manifesto === 'string' &&
+      manifesto.trim().length > 3000
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: 'Manifesto cannot exceed 3000 characters'
       });
     }
 
@@ -64,12 +110,68 @@ const createCandidate = async (req, res) => {
       });
     }
 
+    const folder = 'ballottrust/candidates';
+
+    const photoPromise = files.photo?.[0]
+      ? uploadImage(files.photo[0], `${folder}/photos`)
+      : Promise.resolve(null);
+
+    const flyerPromise = files.flyer?.[0]
+      ? uploadImage(files.flyer[0], `${folder}/flyers`)
+      : Promise.resolve(null);
+
+    const manifestoFiles = files.manifestoImages || [];
+
+    if (manifestoFiles.length > 5) {
+      return res.status(400).json({
+        success: false,
+        message: 'A maximum of 5 manifesto images is allowed'
+      });
+    }
+
+    const manifestoPromises = manifestoFiles.map((file) =>
+      uploadImage(file, `${folder}/manifestos`)
+    );
+
+    // allSettled lets us clean up images even if one upload fails.
+    const uploadResults = await Promise.allSettled([
+      photoPromise,
+      flyerPromise,
+      ...manifestoPromises
+    ]);
+
+    for (const result of uploadResults) {
+      if (result.status === 'fulfilled' && result.value) {
+        uploadedImages.push(result.value);
+      }
+    }
+
+    const failedUpload = uploadResults.find(
+      (result) => result.status === 'rejected'
+    );
+
+    if (failedUpload) {
+      await removeUploadedImages(uploadedImages);
+
+      return res.status(502).json({
+        success: false,
+        message: 'One or more candidate images could not be uploaded'
+      });
+    }
+
+    const photo = uploadResults[0].value;
+    const flyer = uploadResults[1].value;
+    const manifestoImages = uploadResults
+      .slice(2)
+      .map((result) => result.value.url);
+
     const candidate = await Candidate.create({
       name: name.trim(),
       manifesto:
         typeof manifesto === 'string' ? manifesto.trim() : '',
-      photoUrl:
-        typeof photoUrl === 'string' ? photoUrl.trim() : '',
+      photoUrl: photo?.url || '',
+      flyerUrl: flyer?.url || '',
+      manifestoImages,
       position: position._id,
       election: election._id
     });
@@ -80,6 +182,8 @@ const createCandidate = async (req, res) => {
       candidate
     });
   } catch (error) {
+    await removeUploadedImages(uploadedImages);
+
     if (error.name === 'ValidationError') {
       return res.status(400).json({
         success: false,
@@ -134,7 +238,7 @@ const getCandidatesByPosition = async (req, res) => {
       candidates.map(async (candidate) => {
         let candidateName = candidate.name;
 
-        // Support older records containing a user reference.
+        // Preserve support for older records containing a user reference.
         if (!candidateName && candidate.user) {
           const user = await User.findById(candidate.user)
             .select('name')
@@ -145,7 +249,10 @@ const getCandidatesByPosition = async (req, res) => {
 
         return {
           ...candidate,
-          name: candidateName || 'Unnamed candidate'
+          name: candidateName || 'Unnamed candidate',
+          photoUrl: candidate.photoUrl || '',
+          flyerUrl: candidate.flyerUrl || '',
+          manifestoImages: candidate.manifestoImages || []
         };
       })
     );
