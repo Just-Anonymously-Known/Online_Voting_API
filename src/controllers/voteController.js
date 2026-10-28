@@ -8,8 +8,15 @@ const Candidate = require('../models/Candidate');
 const castVote = async (req, res) => {
   try {
     const { electionId } = req.params;
-    const { selections } = req.body;
-    const voterId = req.user.id;
+    const selections = req.body?.selections;
+    const voterId = req.user?.id;
+
+    if (!mongoose.isValidObjectId(voterId)) {
+      return res.status(401).json({
+        success: false,
+        message: 'A valid authenticated voter is required'
+      });
+    }
 
     if (!mongoose.isValidObjectId(electionId)) {
       return res.status(400).json({
@@ -35,11 +42,13 @@ const castVote = async (req, res) => {
     }
 
     const now = new Date();
+    const start = new Date(election.startDate);
+    const end = new Date(election.endDate);
 
     if (
       election.status !== 'active' ||
-      now < new Date(election.startDate) ||
-      now > new Date(election.endDate)
+      now < start ||
+      now > end
     ) {
       return res.status(400).json({
         success: false,
@@ -47,10 +56,10 @@ const castVote = async (req, res) => {
       });
     }
 
-    // Validate every selection before recording the ballot.
-    const selectedPositions = new Set();
     const selectionsByPosition = new Map();
+    const seenCandidates = new Set();
 
+    // Validate selection structure and reject duplicate candidates.
     for (const selection of selections) {
       if (
         !selection ||
@@ -66,24 +75,23 @@ const castVote = async (req, res) => {
       const positionId = String(selection.position);
       const candidateId = String(selection.candidate);
 
-      if (!selectionsByPosition.has(positionId)) {
-        selectionsByPosition.set(positionId, []);
-      }
-
-      const candidatesForPosition = selectionsByPosition.get(positionId);
-
-      if (candidatesForPosition.includes(candidateId)) {
+      if (seenCandidates.has(candidateId)) {
         return res.status(400).json({
           success: false,
           message: 'You cannot select the same candidate more than once'
         });
       }
 
-      candidatesForPosition.push(candidateId);
-      selectedPositions.add(positionId);
+      seenCandidates.add(candidateId);
+
+      if (!selectionsByPosition.has(positionId)) {
+        selectionsByPosition.set(positionId, []);
+      }
+
+      selectionsByPosition.get(positionId).push(candidateId);
     }
 
-    const positionIds = [...selectedPositions];
+    const positionIds = [...selectionsByPosition.keys()];
 
     const positions = await Position.find({
       _id: { $in: positionIds },
@@ -93,15 +101,18 @@ const castVote = async (req, res) => {
     if (positions.length !== positionIds.length) {
       return res.status(400).json({
         success: false,
-        message: 'One or more selected positions do not belong to this election'
+        message: 'One or more positions do not belong to this election'
       });
     }
 
-    for (const position of positions) {
-      const chosenCandidates =
-        selectionsByPosition.get(String(position._id)) || [];
+    const positionsById = new Map(
+      positions.map(position => [String(position._id), position])
+    );
 
-      if (chosenCandidates.length > position.maxSelections) {
+    for (const [positionId, candidateIdsForPosition] of selectionsByPosition) {
+      const position = positionsById.get(positionId);
+
+      if (candidateIdsForPosition.length > position.maxSelections) {
         return res.status(400).json({
           success: false,
           message: `You may select at most ${position.maxSelections} candidate(s) for ${position.title}`
@@ -109,20 +120,17 @@ const castVote = async (req, res) => {
       }
     }
 
-    const candidateIds = selections.map(
-      selection => String(selection.candidate)
-    );
+    const candidateIds = [...seenCandidates];
 
     const candidates = await Candidate.find({
       _id: { $in: candidateIds },
-      election: election._id,
-      position: { $in: positionIds }
+      election: election._id
     });
 
     if (candidates.length !== candidateIds.length) {
       return res.status(400).json({
         success: false,
-        message: 'One or more candidates do not match the selected positions'
+        message: 'One or more candidates do not belong to this election'
       });
     }
 
@@ -140,13 +148,12 @@ const castVote = async (req, res) => {
       ) {
         return res.status(400).json({
           success: false,
-          message: 'Each candidate must belong to the position selected for them'
+          message: 'Each candidate must belong to the selected position'
         });
       }
     }
 
-    // The unique database index on election + voter is the final
-    // protection against duplicate ballot submissions.
+    // Fast check for an existing ballot.
     const existingBallot = await Vote.findOne({
       election: election._id,
       voter: voterId
@@ -159,6 +166,8 @@ const castVote = async (req, res) => {
       });
     }
 
+    // The unique database index must also exist to protect against
+    // simultaneous duplicate submissions.
     const ballot = await Vote.create({
       election: election._id,
       voter: voterId,
@@ -178,11 +187,17 @@ const castVote = async (req, res) => {
       }
     });
   } catch (error) {
-    // Handle concurrent duplicate submissions safely.
     if (error.code === 11000) {
       return res.status(409).json({
         success: false,
         message: 'You have already submitted a ballot for this election'
+      });
+    }
+
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({
+        success: false,
+        message: error.message
       });
     }
 

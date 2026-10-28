@@ -1,11 +1,13 @@
 
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import './Auth.css'
 
 const API_URL = 'https://ballottrust-api.onrender.com/api/auth'
 
 function Login() {
+  const navigate = useNavigate()
+
   const [form, setForm] = useState({
     email: '',
     password: '',
@@ -28,7 +30,9 @@ function Login() {
     try {
       const response = await fetch(`${API_URL}/login`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           email: form.email.trim(),
           password: form.password,
@@ -38,12 +42,40 @@ function Login() {
       const data = await response.json()
 
       if (!response.ok) {
+        if (data.code === 'EMAIL_NOT_VERIFIED') {
+          navigate('/verify-email', {
+            state: { email: form.email.trim() },
+          })
+          return
+        }
+
         throw new Error(data.message || 'Unable to log in.')
       }
 
-      setMessage(
-        'Login accepted by the server. Dashboard access still needs to be connected.',
+      const token = data.data?.token
+      const user = data.data?.user
+
+      if (!token || !user?.id || !['voter', 'admin'].includes(user.role)) {
+        throw new Error('The server returned an unexpected login response.')
+      }
+
+      // Store the token and minimal user details for the app session.
+      localStorage.setItem('ballottrustToken', token)
+      localStorage.setItem(
+        'ballottrustUser',
+        JSON.stringify({
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+        }),
       )
+
+      if (user.role === 'admin') {
+        navigate('/admin/dashboard', { replace: true })
+      } else {
+        navigate('/dashboard', { replace: true })
+      }
     } catch (err) {
       setError(err.message || 'Unable to connect to BallotTrust.')
     } finally {
@@ -65,8 +97,17 @@ function Login() {
           <p>Sign in to continue to BallotTrust.</p>
         </div>
 
-        {error && <div className="auth-alert error" role="alert">{error}</div>}
-        {message && <div className="auth-alert success" role="status">{message}</div>}
+        {error && (
+          <div className="auth-alert error" role="alert">
+            {error}
+          </div>
+        )}
+
+        {message && (
+          <div className="auth-alert success" role="status">
+            {message}
+          </div>
+        )}
 
         <form className="auth-form" onSubmit={handleSubmit}>
           <label htmlFor="email">Email address</label>

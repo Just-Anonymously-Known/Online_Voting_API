@@ -3,25 +3,35 @@ const mongoose = require('mongoose');
 const Candidate = require('../models/Candidate');
 const Position = require('../models/Position');
 const Election = require('../models/election');
+const User = require('../models/User');
 
 // Admin: create a candidate for a position
 const createCandidate = async (req, res) => {
   try {
-    const { name, manifesto, photoUrl } = req.body;
+    const { name, manifesto, photoUrl } = req.body || {};
     const { electionId, positionId } = req.params;
 
-    if (!name || !name.trim()) {
+    if (
+      !mongoose.isValidObjectId(electionId) ||
+      !mongoose.isValidObjectId(positionId)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid election or position ID'
+      });
+    }
+
+    if (typeof name !== 'string' || !name.trim()) {
       return res.status(400).json({
         success: false,
         message: 'Candidate name is required'
       });
     }
 
-    if (!mongoose.isValidObjectId(electionId) ||
-        !mongoose.isValidObjectId(positionId)) {
+    if (name.trim().length > 120) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid election or position ID'
+        message: 'Candidate name cannot exceed 120 characters'
       });
     }
 
@@ -34,16 +44,17 @@ const createCandidate = async (req, res) => {
       });
     }
 
-    if (election.status === 'completed' || election.status === 'cancelled') {
+    if (!['draft', 'scheduled'].includes(election.status)) {
       return res.status(400).json({
         success: false,
-        message: 'Candidates cannot be added to a completed or cancelled election'
+        message:
+          'Candidates can only be added to draft or scheduled elections'
       });
     }
 
     const position = await Position.findOne({
       _id: positionId,
-      election: electionId
+      election: election._id
     });
 
     if (!position) {
@@ -55,8 +66,10 @@ const createCandidate = async (req, res) => {
 
     const candidate = await Candidate.create({
       name: name.trim(),
-      manifesto,
-      photoUrl,
+      manifesto:
+        typeof manifesto === 'string' ? manifesto.trim() : '',
+      photoUrl:
+        typeof photoUrl === 'string' ? photoUrl.trim() : '',
       position: position._id,
       election: election._id
     });
@@ -88,8 +101,10 @@ const getCandidatesByPosition = async (req, res) => {
   try {
     const { electionId, positionId } = req.params;
 
-    if (!mongoose.isValidObjectId(electionId) ||
-        !mongoose.isValidObjectId(positionId)) {
+    if (
+      !mongoose.isValidObjectId(electionId) ||
+      !mongoose.isValidObjectId(positionId)
+    ) {
       return res.status(400).json({
         success: false,
         message: 'Invalid election or position ID'
@@ -111,12 +126,34 @@ const getCandidatesByPosition = async (req, res) => {
     const candidates = await Candidate.find({
       position: position._id,
       election: electionId
-    }).sort({ name: 1 });
+    })
+      .sort({ name: 1 })
+      .lean();
+
+    const formattedCandidates = await Promise.all(
+      candidates.map(async (candidate) => {
+        let candidateName = candidate.name;
+
+        // Support older records containing a user reference.
+        if (!candidateName && candidate.user) {
+          const user = await User.findById(candidate.user)
+            .select('name')
+            .lean();
+
+          candidateName = user?.name;
+        }
+
+        return {
+          ...candidate,
+          name: candidateName || 'Unnamed candidate'
+        };
+      })
+    );
 
     return res.status(200).json({
       success: true,
-      count: candidates.length,
-      candidates
+      count: formattedCandidates.length,
+      candidates: formattedCandidates
     });
   } catch (error) {
     console.error('Get candidates error:', error);

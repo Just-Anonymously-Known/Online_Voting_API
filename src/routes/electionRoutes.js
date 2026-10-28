@@ -5,7 +5,8 @@ const router = express.Router();
 const {
   createElection,
   getElections,
-  getElectionById
+  getElectionById,
+  updateElectionStatus
 } = require('../controllers/electionController');
 
 const {
@@ -31,6 +32,14 @@ router.get('/:id', getElectionById);
 
 // Admin only: create an election
 router.post('/', protect, authorize('admin'), createElection);
+
+// Admin only: update election status
+router.patch(
+  '/:id/status',
+  protect,
+  authorize('admin'),
+  updateElectionStatus
+);
 
 // Public: list positions for an election
 router.get('/:electionId/positions', getPositionsByElection);
@@ -58,4 +67,3 @@ router.post(
 );
 
 module.exports = router;
-

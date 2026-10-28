@@ -1,17 +1,35 @@
 
+const mongoose = require('mongoose');
 const Position = require('../models/Position');
 const Election = require('../models/election');
 
 // Create a position for an election
 const createPosition = async (req, res) => {
   try {
-    const { title, description, maxSelections } = req.body;
+    const { title, description, maxSelections } = req.body || {};
     const { electionId } = req.params;
 
-    if (!title || !title.trim()) {
+    if (!mongoose.isValidObjectId(electionId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid election ID'
+      });
+    }
+
+    if (
+      typeof title !== 'string' ||
+      !title.trim()
+    ) {
       return res.status(400).json({
         success: false,
         message: 'Position title is required'
+      });
+    }
+
+    if (title.trim().length > 150) {
+      return res.status(400).json({
+        success: false,
+        message: 'Position title cannot exceed 150 characters'
       });
     }
 
@@ -31,6 +49,13 @@ const createPosition = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: 'Election not found'
+      });
+    }
+
+    if (!['draft', 'scheduled'].includes(election.status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Positions can only be added to draft or scheduled elections'
       });
     }
 
@@ -61,13 +86,6 @@ const createPosition = async (req, res) => {
       });
     }
 
-    if (error.name === 'CastError') {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid election ID'
-      });
-    }
-
     console.error('Create position error:', error);
 
     return res.status(500).json({
@@ -81,6 +99,13 @@ const createPosition = async (req, res) => {
 const getPositionsByElection = async (req, res) => {
   try {
     const { electionId } = req.params;
+
+    if (!mongoose.isValidObjectId(electionId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid election ID'
+      });
+    }
 
     const election = await Election.findById(electionId);
 
@@ -101,13 +126,6 @@ const getPositionsByElection = async (req, res) => {
       positions
     });
   } catch (error) {
-    if (error.name === 'CastError') {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid election ID'
-      });
-    }
-
     console.error('Get positions error:', error);
 
     return res.status(500).json({
