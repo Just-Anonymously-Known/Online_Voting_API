@@ -25,10 +25,28 @@ const getElectionResults = async (req, res) => {
       });
     }
 
-    if (election.status !== 'completed') {
+    const isAdmin = req.user?.role === 'admin';
+    const status = String(election.status || '').toLowerCase();
+
+    // Only administrators can monitor results while voting is in progress.
+    // Other authenticated users can view results after completion.
+    if (status !== 'completed' && !isAdmin) {
       return res.status(403).json({
         success: false,
-        message: 'Results are available after the election is completed'
+        message: 'Election results are available after the election is completed'
+      });
+    }
+
+    // Scheduled, draft, cancelled and other non-running elections
+    // must not expose vote counts, even to administrators.
+    if (
+      isAdmin &&
+      status !== 'completed' &&
+      status !== 'active'
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: 'Vote counts are available only for active or completed elections'
       });
     }
 
@@ -37,7 +55,7 @@ const getElectionResults = async (req, res) => {
     }).sort({ title: 1 });
 
     const results = await Promise.all(
-      positions.map(async position => {
+      positions.map(async (position) => {
         const candidates = await Candidate.find({
           election: election._id,
           position: position._id
@@ -66,17 +84,33 @@ const getElectionResults = async (req, res) => {
         ]);
 
         const totalsByCandidate = new Map(
-          totals.map(item => [String(item._id), item.votes])
+          totals.map((item) => [
+            String(item._id),
+            item.votes
+          ])
+        );
+
+        const candidateResults = candidates.map((candidate) => ({
+          candidateId: candidate._id,
+          name: candidate.name,
+          photoUrl: candidate.photoUrl,
+          votes: totalsByCandidate.get(String(candidate._id)) || 0
+        }));
+
+        const totalVotes = candidateResults.reduce(
+          (sum, candidate) => sum + candidate.votes,
+          0
         );
 
         return {
           positionId: position._id,
           positionTitle: position.title,
-          candidates: candidates.map(candidate => ({
-            candidateId: candidate._id,
-            name: candidate.name,
-            photoUrl: candidate.photoUrl,
-            votes: totalsByCandidate.get(String(candidate._id)) || 0
+          totalVotes,
+          candidates: candidateResults.map((candidate) => ({
+            ...candidate,
+            percentage: totalVotes > 0
+              ? Number(((candidate.votes / totalVotes) * 100).toFixed(2))
+              : 0
           }))
         };
       })
@@ -87,8 +121,9 @@ const getElectionResults = async (req, res) => {
       election: {
         id: election._id,
         title: election.title,
-        status: election.status
+        status
       },
+      provisional: status !== 'completed',
       results
     });
   } catch (error) {

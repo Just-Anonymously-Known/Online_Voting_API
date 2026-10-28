@@ -2,7 +2,62 @@
 const mongoose = require('mongoose');
 const Election = require('../models/election');
 
-// Create a new election
+const VALID_STATUSES = [
+  'draft',
+  'scheduled',
+  'active',
+  'completed',
+  'cancelled'
+];
+
+const normalizeStatus = (status) => {
+  if (typeof status !== 'string') return '';
+  const value = status.trim().toLowerCase();
+
+  // Compatibility with legacy records.
+  if (value === 'upcoming') return 'scheduled';
+
+  return value;
+};
+
+const getEffectiveStatus = (election, now = new Date()) => {
+  const status = normalizeStatus(election.status);
+  const start = new Date(election.startDate);
+  const end = new Date(election.endDate);
+
+  if (status === 'cancelled' || status === 'completed' || status === 'draft') {
+    return status;
+  }
+
+  if (
+    Number.isNaN(start.getTime()) ||
+    Number.isNaN(end.getTime()) ||
+    end <= start
+  ) {
+    return 'needs_review';
+  }
+
+  if (now > end) return 'expired';
+  if (now < start) return 'scheduled';
+
+  // Dates alone must never activate an election.
+  if (status === 'active') return 'active';
+
+  return 'awaiting_activation';
+};
+
+const serializeElection = (election) => {
+  const data = election.toObject
+    ? election.toObject()
+    : { ...election };
+
+  data.status = normalizeStatus(data.status);
+  data.effectiveStatus = getEffectiveStatus(data);
+
+  return data;
+};
+
+// Create a new election.
 const createElection = async (req, res) => {
   try {
     const { title, description, startDate, endDate } = req.body || {};
@@ -48,16 +103,18 @@ const createElection = async (req, res) => {
 
     const election = await Election.create({
       title: title.trim(),
-      description,
+      description:
+        typeof description === 'string' ? description.trim() : '',
       startDate: start,
       endDate: end,
+      status: 'draft',
       createdBy: req.user.id
     });
 
     return res.status(201).json({
       success: true,
       message: 'Election created successfully',
-      election
+      election: serializeElection(election)
     });
   } catch (error) {
     if (error.name === 'ValidationError') {
@@ -76,17 +133,18 @@ const createElection = async (req, res) => {
   }
 };
 
-// Get all elections
+// Get all elections.
 const getElections = async (req, res) => {
   try {
     const elections = await Election.find()
       .populate('createdBy', 'name email')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
     return res.status(200).json({
       success: true,
       count: elections.length,
-      elections
+      elections: elections.map(serializeElection)
     });
   } catch (error) {
     console.error('Get elections error:', error);
@@ -98,7 +156,7 @@ const getElections = async (req, res) => {
   }
 };
 
-// Get one election by ID
+// Get one election by ID.
 const getElectionById = async (req, res) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) {
@@ -109,7 +167,8 @@ const getElectionById = async (req, res) => {
     }
 
     const election = await Election.findById(req.params.id)
-      .populate('createdBy', 'name email');
+      .populate('createdBy', 'name email')
+      .lean();
 
     if (!election) {
       return res.status(404).json({
@@ -120,7 +179,7 @@ const getElectionById = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      election
+      election: serializeElection(election)
     });
   } catch (error) {
     console.error('Get election error:', error);
@@ -132,11 +191,11 @@ const getElectionById = async (req, res) => {
   }
 };
 
-// Admin: update election status
+// Admin: update election status.
 const updateElectionStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body || {};
+    const requestedStatus = normalizeStatus(req.body?.status);
 
     if (!mongoose.isValidObjectId(id)) {
       return res.status(400).json({
@@ -145,15 +204,7 @@ const updateElectionStatus = async (req, res) => {
       });
     }
 
-    const allowedStatuses = [
-      'draft',
-      'scheduled',
-      'active',
-      'completed',
-      'cancelled'
-    ];
-
-    if (!allowedStatuses.includes(status)) {
+    if (!VALID_STATUSES.includes(requestedStatus)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid election status'
@@ -169,8 +220,9 @@ const updateElectionStatus = async (req, res) => {
       });
     }
 
-    const currentStatus = election.status;
+    const currentStatus = normalizeStatus(election.status);
 
+    // Treat legacy UPCOMING as scheduled for transition checks.
     const allowedTransitions = {
       draft: ['scheduled', 'cancelled'],
       scheduled: ['active', 'cancelled'],
@@ -179,10 +231,11 @@ const updateElectionStatus = async (req, res) => {
       cancelled: []
     };
 
-    if (!allowedTransitions[currentStatus]?.includes(status)) {
+    if (!allowedTransitions[currentStatus]?.includes(requestedStatus)) {
       return res.status(400).json({
         success: false,
-        message: `Cannot change election status from ${currentStatus} to ${status}`
+        message:
+          `Cannot change election status from ${currentStatus} to ${requestedStatus}`
       });
     }
 
@@ -190,34 +243,45 @@ const updateElectionStatus = async (req, res) => {
     const start = new Date(election.startDate);
     const end = new Date(election.endDate);
 
-    if (status === 'scheduled' && start <= now) {
+    if (
+      Number.isNaN(start.getTime()) ||
+      Number.isNaN(end.getTime()) ||
+      end <= start
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: 'Election dates are invalid and must be reviewed'
+      });
+    }
+
+    if (requestedStatus === 'scheduled' && start <= now) {
       return res.status(400).json({
         success: false,
         message: 'Only elections with a future start date can be scheduled'
       });
     }
 
-    if (status === 'active' && (now < start || now > end)) {
+    if (requestedStatus === 'active' && (now < start || now > end)) {
       return res.status(400).json({
         success: false,
-        message: 'An election can only be active during its voting period'
+        message: 'An election can only be activated during its voting period'
       });
     }
 
-    if (status === 'completed' && now <= end) {
+    if (requestedStatus === 'completed' && now <= end) {
       return res.status(400).json({
         success: false,
         message: 'An election cannot be completed before its end date'
       });
     }
 
-    election.status = status;
+    election.status = requestedStatus;
     await election.save();
 
     return res.status(200).json({
       success: true,
-      message: `Election status updated to ${status}`,
-      election
+      message: `Election status updated to ${requestedStatus}`,
+      election: serializeElection(election)
     });
   } catch (error) {
     if (error.name === 'ValidationError') {

@@ -5,6 +5,17 @@ const Election = require('../models/election');
 const Position = require('../models/Position');
 const Candidate = require('../models/Candidate');
 
+const normalizeStatus = (status) => {
+  if (typeof status !== 'string') return '';
+
+  const value = status.trim().toLowerCase();
+
+  // Support legacy election records without changing the database.
+  if (value === 'upcoming') return 'scheduled';
+
+  return value;
+};
+
 const castVote = async (req, res) => {
   try {
     const { electionId } = req.params;
@@ -44,12 +55,21 @@ const castVote = async (req, res) => {
     const now = new Date();
     const start = new Date(election.startDate);
     const end = new Date(election.endDate);
+    const status = normalizeStatus(election.status);
 
     if (
-      election.status !== 'active' ||
-      now < start ||
-      now > end
+      Number.isNaN(start.getTime()) ||
+      Number.isNaN(end.getTime()) ||
+      end <= start
     ) {
+      return res.status(400).json({
+        success: false,
+        message: 'Election dates are invalid. Voting is unavailable.'
+      });
+    }
+
+    // Only explicitly active elections within the voting window accept votes.
+    if (status !== 'active' || now < start || now >= end) {
       return res.status(400).json({
         success: false,
         message: 'This election is not currently open for voting'
@@ -59,7 +79,7 @@ const castVote = async (req, res) => {
     const selectionsByPosition = new Map();
     const seenCandidates = new Set();
 
-    // Validate selection structure and reject duplicate candidates.
+    // Validate the submitted selections and reject duplicate candidates.
     for (const selection of selections) {
       if (
         !selection ||
@@ -68,7 +88,8 @@ const castVote = async (req, res) => {
       ) {
         return res.status(400).json({
           success: false,
-          message: 'Each selection must contain valid position and candidate IDs'
+          message:
+            'Each selection must contain valid position and candidate IDs'
         });
       }
 
@@ -112,10 +133,22 @@ const castVote = async (req, res) => {
     for (const [positionId, candidateIdsForPosition] of selectionsByPosition) {
       const position = positionsById.get(positionId);
 
+      if (
+        !position ||
+        !Number.isInteger(position.maxSelections) ||
+        position.maxSelections < 1
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: 'A selected position has an invalid selection limit'
+        });
+      }
+
       if (candidateIdsForPosition.length > position.maxSelections) {
         return res.status(400).json({
           success: false,
-          message: `You may select at most ${position.maxSelections} candidate(s) for ${position.title}`
+          message:
+            `You may select at most ${position.maxSelections} candidate(s) for ${position.title}`
         });
       }
     }
@@ -153,7 +186,7 @@ const castVote = async (req, res) => {
       }
     }
 
-    // Fast check for an existing ballot.
+    // Check whether this voter has already submitted a ballot.
     const existingBallot = await Vote.findOne({
       election: election._id,
       voter: voterId
@@ -166,8 +199,8 @@ const castVote = async (req, res) => {
       });
     }
 
-    // The unique database index must also exist to protect against
-    // simultaneous duplicate submissions.
+    // The database's unique ballot index remains the final safeguard
+    // against simultaneous duplicate submissions.
     const ballot = await Vote.create({
       election: election._id,
       voter: voterId,

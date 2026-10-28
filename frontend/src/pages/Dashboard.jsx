@@ -47,24 +47,38 @@ function Dashboard() {
 
     setUser(currentUser)
 
+    const controller = new AbortController()
+
     const fetchElections = async () => {
       try {
-        const response = await fetch(`${API_URL}/elections`)
+        setLoading(true)
+        setError('')
+
+        const response = await fetch(`${API_URL}/elections`, {
+          signal: controller.signal,
+        })
+
         const data = await response.json()
 
-        if (!response.ok) {
+        if (!response.ok || data.success === false) {
           throw new Error(data.message || 'Unable to load elections.')
         }
 
         setElections(Array.isArray(data.elections) ? data.elections : [])
       } catch (err) {
-        setError(err.message || 'Could not connect to BallotTrust.')
+        if (err.name !== 'AbortError') {
+          setError(err.message || 'Could not connect to BallotTrust.')
+        }
       } finally {
-        setLoading(false)
+        if (!controller.signal.aborted) {
+          setLoading(false)
+        }
       }
     }
 
     fetchElections()
+
+    return () => controller.abort()
   }, [navigate])
 
   const handleLogout = () => {
@@ -88,10 +102,64 @@ function Dashboard() {
     })
   }
 
-  const formatStatus = (status) => {
-    if (!status) return 'Unknown'
+  const getElectionStatus = (election) => {
+    const rawStatus = String(election.status || '')
+      .trim()
+      .toLowerCase()
 
-    return status.charAt(0).toUpperCase() + status.slice(1)
+    const now = Date.now()
+    const start = new Date(election.startDate).getTime()
+    const end = new Date(election.endDate).getTime()
+
+    // Preserve terminal states; dates must not override cancellation.
+    if (rawStatus === 'cancelled') {
+      return { label: 'Cancelled', key: 'cancelled' }
+    }
+
+    if (rawStatus === 'completed') {
+      return { label: 'Completed', key: 'completed' }
+    }
+
+    // Draft elections are not open, even if their dates have arrived.
+    if (rawStatus === 'draft') {
+      return { label: 'Draft', key: 'draft' }
+    }
+
+    // Recognize legacy status values without modifying database records.
+    if (rawStatus === 'upcoming' || rawStatus === 'scheduled') {
+      if (Number.isNaN(start) || Number.isNaN(end)) {
+        return { label: 'Scheduled', key: 'scheduled' }
+      }
+
+      if (now > end) {
+        return { label: 'Expired', key: 'expired' }
+      }
+
+      if (now < start) {
+        return { label: 'Scheduled', key: 'scheduled' }
+      }
+
+      // The date window has arrived, but the backend status is not active.
+      return { label: 'Awaiting activation', key: 'awaiting-activation' }
+    }
+
+    if (rawStatus === 'active') {
+      if (Number.isNaN(start) || Number.isNaN(end)) {
+        return { label: 'Status needs review', key: 'unknown' }
+      }
+
+      if (now < start) {
+        return { label: 'Scheduled', key: 'scheduled' }
+      }
+
+      if (now > end) {
+        return { label: 'Expired', key: 'expired' }
+      }
+
+      return { label: 'Active', key: 'active' }
+    }
+
+    return { label: 'Status needs review', key: 'unknown' }
   }
 
   return (
@@ -140,7 +208,7 @@ function Dashboard() {
         <section className="dashboard-elections">
           <div className="dashboard-section-heading">
             <div>
-              <h2>Available elections</h2>
+              <h2>Your elections</h2>
               <p>Review election schedules and current status.</p>
             </div>
 
@@ -185,7 +253,7 @@ function Dashboard() {
           {!loading && !error && elections.length > 0 && (
             <div className="election-grid">
               {elections.map((election) => {
-                const status = formatStatus(election.status)
+                const status = getElectionStatus(election)
 
                 return (
                   <article
@@ -194,9 +262,9 @@ function Dashboard() {
                   >
                     <div className="election-card-top">
                       <span
-                        className={`election-status status-${status.toLowerCase()}`}
+                        className={`election-status status-${status.key}`}
                       >
-                        {status}
+                        {status.label}
                       </span>
                     </div>
 

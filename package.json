@@ -1,11 +1,13 @@
+
 {
   "name": "online_voting_API",
   "version": "1.0.0",
-  "description": "",
+  "description": "BallotTrust online voting API",
   "main": "index.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "test": "node --test src/test/*.test.js"
   },
   "keywords": [],
   "author": "",

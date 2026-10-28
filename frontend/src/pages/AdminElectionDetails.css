@@ -1,0 +1,215 @@
+
+.admin-election-page {
+  --election-page-bg: var(--page-bg, #0d1511);
+  --election-surface: var(--surface, #17231c);
+  --election-surface-secondary: var(--surface-secondary, #1d2c23);
+  --election-text: var(--text-primary, #f0f5f1);
+  --election-muted: var(--text-secondary, #aab9af);
+  --election-border: var(--border-color, #304238);
+  --election-brand: var(--brand-color, #208760);
+  --election-brand-hover: var(--brand-hover, #2c9b70);
+
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 32px 20px 60px;
+  color: var(--election-text);
+  background: var(--election-page-bg);
+}
+
+.admin-election-page * {
+  box-sizing: border-box;
+}
+
+.admin-election-page .back-button {
+  margin-bottom: 24px;
+  padding: 10px 14px;
+  border: 1px solid var(--election-border);
+  border-radius: 8px;
+  background: var(--election-surface);
+  color: var(--election-text);
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.admin-election-page .back-button:hover {
+  background: var(--election-surface-secondary);
+  border-color: var(--election-brand);
+}
+
+.admin-election-header {
+  margin-bottom: 28px;
+}
+
+.admin-election-page .eyebrow {
+  color: var(--election-brand-hover);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.admin-election-header h1 {
+  margin: 8px 0;
+  color: var(--election-text);
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  line-height: 1.2;
+}
+
+.admin-election-page p {
+  color: var(--election-muted);
+  line-height: 1.7;
+}
+
+.admin-section {
+  margin: 24px 0;
+  padding: 24px;
+  border: 1px solid var(--election-border);
+  border-radius: 14px;
+  background: var(--election-surface);
+}
+
+.admin-section h2,
+.position-card h3 {
+  margin-top: 0;
+  color: var(--election-text);
+}
+
+.admin-form {
+  display: grid;
+  gap: 16px;
+  max-width: 620px;
+}
+
+.admin-form label {
+  display: grid;
+  gap: 7px;
+  color: var(--election-text);
+  font-weight: 600;
+}
+
+.admin-form input,
+.admin-form textarea {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--election-border);
+  border-radius: 8px;
+  background: #293943;
+  color: #f0f5f1;
+  font: inherit;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.admin-form input::placeholder,
+.admin-form textarea::placeholder {
+  color: #aab9af;
+}
+
+.admin-form input:focus,
+.admin-form textarea:focus {
+  outline: none;
+  border-color: var(--election-brand-hover);
+  box-shadow: 0 0 0 3px rgb(32 135 96 / 20%);
+}
+
+.admin-form textarea {
+  min-height: 110px;
+  resize: vertical;
+}
+
+.admin-form button {
+  justify-self: start;
+  padding: 11px 18px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--election-brand);
+  color: #ffffff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.admin-form button:hover:not(:disabled) {
+  background: var(--election-brand-hover);
+  transform: translateY(-1px);
+}
+
+.admin-form button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.positions-list {
+  display: grid;
+  gap: 20px;
+}
+
+.position-card {
+  padding: 20px;
+  border: 1px solid var(--election-border);
+  border-radius: 12px;
+  background: var(--election-surface-secondary);
+}
+
+.position-card h3 {
+  margin-top: 0;
+}
+
+.position-card ul {
+  padding-left: 22px;
+  color: var(--election-muted);
+}
+
+.position-card li {
+  margin: 12px 0;
+  line-height: 1.6;
+}
+
+.candidate-form {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--election-border);
+}
+
+.notice {
+  margin: 16px 0;
+  padding: 12px 14px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  line-height: 1.6;
+}
+
+.error-message {
+  border-color: #7f3035;
+  background: #351c20;
+  color: #ffb8bd;
+}
+
+.success-message {
+  border-color: #286847;
+  background: #193426;
+  color: #a9e8c1;
+}
+
+.admin-election-page button:focus-visible {
+  outline: 2px solid var(--election-brand-hover);
+  outline-offset: 3px;
+}
+
+@media (max-width: 600px) {
+  .admin-election-page {
+    padding: 20px 14px 40px;
+  }
+
+  .admin-section {
+    padding: 16px;
+  }
+
+  .position-card {
+    padding: 16px;
+  }
+
+  .admin-form button {
+    width: 100%;
+    justify-self: stretch;
+  }
+}

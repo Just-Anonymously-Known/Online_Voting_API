@@ -1,22 +1,116 @@
 
 :root {
   font-family: 'DM Sans', 'Segoe UI', sans-serif;
-  color: #18251f;
-  background: #fbfcfa;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  color-scheme: light dark;
+  color-scheme: light;
 
+  /* Light theme */
   --page-bg: #fbfcfa;
   --surface: #ffffff;
+  --surface-secondary: #f3f7f3;
+  --surface-hover: #edf4ee;
   --text-primary: #18251f;
   --text-secondary: #657169;
   --border-color: #e5ebe4;
   --brand-color: #176b4b;
   --brand-hover: #10563b;
+  --brand-contrast: #ffffff;
+  --brand-subtle: #eaf4ed;
+
+  --input-bg: #ffffff;
+  --input-text: #18251f;
+  --input-border: #d5dfd6;
+
+  --success: #238553;
+  --danger: #c0392b;
+  --warning: #a66a12;
+
+  --shadow-sm: 0 5px 20px rgb(18 35 30 / 5%);
+  --shadow-md: 0 12px 32px rgb(18 35 30 / 9%);
+}
+
+/* Follow the device theme unless manually overridden. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) {
+    color-scheme: dark;
+
+    --page-bg: #0d1511;
+    --surface: #17231c;
+    --surface-secondary: #1d2c23;
+    --surface-hover: #26382d;
+    --text-primary: #f0f5f1;
+    --text-secondary: #aab9af;
+    --border-color: #304238;
+    --brand-color: #187653;
+    --brand-hover: #208760;
+    --brand-contrast: #ffffff;
+    --brand-subtle: #1c3428;
+
+    --input-bg: #293943;
+    --input-text: #f4f7f8;
+    --input-border: #40534b;
+
+    --success: #8cdbab;
+    --danger: #ffaaa2;
+    --warning: #f2d18a;
+
+    --shadow-sm: 0 5px 20px rgb(0 0 0 / 18%);
+    --shadow-md: 0 12px 32px rgb(0 0 0 / 28%);
+  }
+}
+
+/* Explicit light theme. */
+:root[data-theme="light"],
+[data-theme="light"] {
+  color-scheme: light;
+  --page-bg: #fbfcfa;
+  --surface: #ffffff;
+  --surface-secondary: #f3f7f3;
+  --surface-hover: #edf4ee;
+  --text-primary: #18251f;
+  --text-secondary: #657169;
+  --border-color: #e5ebe4;
+  --brand-color: #176b4b;
+  --brand-hover: #10563b;
+  --brand-contrast: #ffffff;
+  --brand-subtle: #eaf4ed;
+  --input-bg: #ffffff;
+  --input-text: #18251f;
+  --input-border: #d5dfd6;
+  --success: #238553;
+  --danger: #c0392b;
+  --warning: #a66a12;
+  --shadow-sm: 0 5px 20px rgb(18 35 30 / 5%);
+  --shadow-md: 0 12px 32px rgb(18 35 30 / 9%);
+}
+
+/* Explicit dark theme. */
+:root[data-theme="dark"],
+[data-theme="dark"] {
+  color-scheme: dark;
+  --page-bg: #0d1511;
+  --surface: #17231c;
+  --surface-secondary: #1d2c23;
+  --surface-hover: #26382d;
+  --text-primary: #f0f5f1;
+  --text-secondary: #aab9af;
+  --border-color: #304238;
+  --brand-color: #187653;
+  --brand-hover: #208760;
+  --brand-contrast: #ffffff;
+  --brand-subtle: #1c3428;
+  --input-bg: #293943;
+  --input-text: #f4f7f8;
+  --input-border: #40534b;
+  --success: #8cdbab;
+  --danger: #ffaaa2;
+  --warning: #f2d18a;
+  --shadow-sm: 0 5px 20px rgb(0 0 0 / 18%);
+  --shadow-md: 0 12px 32px rgb(0 0 0 / 28%);
 }
 
 * {
@@ -25,7 +119,9 @@
 
 html {
   min-width: 320px;
+  min-height: 100%;
   scroll-behavior: smooth;
+  background: var(--page-bg);
 }
 
 body {
@@ -34,12 +130,15 @@ body {
   min-height: 100vh;
   background: var(--page-bg);
   color: var(--text-primary);
+  transition: background-color 180ms ease, color 180ms ease;
 }
 
 #root {
   width: 100%;
   min-height: 100vh;
   margin: 0;
+  background: var(--page-bg);
+  color: var(--text-primary);
 }
 
 button,
@@ -67,14 +166,32 @@ img {
   max-width: 100%;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --page-bg: #101713;
-    --surface: #18221c;
-    --text-primary: #edf5ef;
-    --text-secondary: #b0beb4;
-    --border-color: #304036;
-    --brand-color: #68c69a;
-    --brand-hover: #85d8ad;
+input,
+textarea,
+select {
+  color: var(--input-text);
+  background-color: var(--input-bg);
+  border-color: var(--input-border);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.85;
+}
+
+:focus-visible {
+  outline: 2px solid var(--brand-color);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }

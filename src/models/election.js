@@ -13,7 +13,7 @@ const electionSchema = new mongoose.Schema(
       type: String,
       trim: true,
       default: '',
-      maxlength: [2000, 'Description cannot exceed 2000 characters']
+      maxlength: [3000, 'Description cannot exceed 3000 characters']
     },
     startDate: {
       type: Date,
@@ -32,7 +32,10 @@ const electionSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: ['draft', 'scheduled', 'active', 'completed', 'cancelled'],
-      default: 'draft'
+      default: 'draft',
+      set: function (value) {
+        return typeof value === 'string' ? value.toLowerCase() : value;
+      }
     },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,

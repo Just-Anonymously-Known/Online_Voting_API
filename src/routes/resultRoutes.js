@@ -10,11 +10,8 @@ const {
   protect
 } = require('../middleware/authMiddleware');
 
-// Authenticated users can view results after an election is completed.
-router.get(
-  '/:electionId',
-  protect,
-  getElectionResults
-);
+// Authenticated users can view completed results.
+// Administrators can also monitor active election results.
+router.get('/:electionId', protect, getElectionResults);
 
 module.exports = router;
