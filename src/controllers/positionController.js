@@ -7,10 +7,13 @@ const Vote = require('../models/Vote');
 
 const isValidId = (id) => mongoose.isValidObjectId(id);
 
-const canManageElection = (election) =>
-  ['draft', 'scheduled'].includes(election.status);
+const canManageElection = (election) => {
+  const status = String(election.status || '').trim().toLowerCase();
 
-// Create a position for an election
+  return ['draft', 'scheduled', 'upcoming'].includes(status);
+};
+
+// Create a position for an election.
 const createPosition = async (req, res) => {
   try {
     const { electionId } = req.params;
@@ -70,7 +73,8 @@ const createPosition = async (req, res) => {
     if (!canManageElection(election)) {
       return res.status(400).json({
         success: false,
-        message: 'Positions can only be added to draft or scheduled elections'
+        message:
+          'Positions can only be added to draft or scheduled elections'
       });
     }
 
@@ -110,7 +114,7 @@ const createPosition = async (req, res) => {
   }
 };
 
-// Get all positions for an election
+// Get all positions for an election.
 const getPositionsByElection = async (req, res) => {
   try {
     const { electionId } = req.params;
@@ -150,7 +154,7 @@ const getPositionsByElection = async (req, res) => {
   }
 };
 
-// Get one position by ID
+// Get one position by ID.
 const getPositionById = async (req, res) => {
   try {
     const { positionId } = req.params;
@@ -185,7 +189,7 @@ const getPositionById = async (req, res) => {
   }
 };
 
-// Update a position
+// Update a position.
 const updatePosition = async (req, res) => {
   try {
     const { positionId } = req.params;
@@ -219,7 +223,8 @@ const updatePosition = async (req, res) => {
     if (!canManageElection(election)) {
       return res.status(400).json({
         success: false,
-        message: 'Only positions in draft or scheduled elections can be edited'
+        message:
+          'Only positions in draft or scheduled elections can be edited'
       });
     }
 
@@ -275,6 +280,23 @@ const updatePosition = async (req, res) => {
       });
     }
 
+    // Do not change the selection limit if ballots already
+    // contain selections for this position.
+    if (updates.maxSelections !== undefined) {
+      const hasRecordedVotes = await Vote.exists({
+        election: election._id,
+        'selections.position': position._id
+      });
+
+      if (hasRecordedVotes) {
+        return res.status(409).json({
+          success: false,
+          message:
+            'Cannot change the selection limit for a position with recorded votes'
+        });
+      }
+    }
+
     Object.assign(position, updates);
     await position.save();
 
@@ -307,7 +329,7 @@ const updatePosition = async (req, res) => {
   }
 };
 
-// Delete a position only when it has no candidates or votes
+// Delete a position only when it has no candidates or votes.
 const deletePosition = async (req, res) => {
   try {
     const { positionId } = req.params;
@@ -340,7 +362,8 @@ const deletePosition = async (req, res) => {
     if (!canManageElection(election)) {
       return res.status(400).json({
         success: false,
-        message: 'Only positions in draft or scheduled elections can be deleted'
+        message:
+          'Only positions in draft or scheduled elections can be deleted'
       });
     }
 
@@ -358,7 +381,8 @@ const deletePosition = async (req, res) => {
     if (candidateExists || voteExists) {
       return res.status(409).json({
         success: false,
-        message: 'Cannot delete a position that has candidates or votes associated with it'
+        message:
+          'Cannot delete a position that has candidates or votes associated with it'
       });
     }
 

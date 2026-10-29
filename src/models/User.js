@@ -2,12 +2,16 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
+const PASSWORD_REGEX =
+  /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9\s])\S{12,}$/;
+
 const userSchema = new mongoose.Schema(
   {
     name: {
       type: String,
       required: [true, 'Name is required'],
-      trim: true
+      trim: true,
+      maxlength: [120, 'Name cannot exceed 120 characters']
     },
 
     email: {
@@ -30,8 +34,8 @@ const userSchema = new mongoose.Schema(
       required: [true, 'Password is required'],
       minlength: [12, 'Password must be at least 12 characters'],
       validate: {
-        validator: function (password) {
-          return /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9\s])\S{12,}$/.test(password);
+        validator(password) {
+          return PASSWORD_REGEX.test(password);
         },
         message:
           'Password must be at least 12 characters and include uppercase, lowercase, a number, and a special character, with no spaces'
@@ -44,7 +48,6 @@ const userSchema = new mongoose.Schema(
       default: 'voter'
     },
 
-    // Verification status
     emailVerified: {
       type: Boolean,
       default: false
@@ -55,7 +58,6 @@ const userSchema = new mongoose.Schema(
       default: false
     },
 
-    // Email OTP verification
     emailVerificationCodeHash: {
       type: String,
       select: false
@@ -66,7 +68,6 @@ const userSchema = new mongoose.Schema(
       select: false
     },
 
-    // Phone OTP verification (for future SMS integration)
     phoneVerificationPinId: {
       type: String,
       select: false
@@ -77,7 +78,6 @@ const userSchema = new mongoose.Schema(
       select: false
     },
 
-    // Account status
     isActive: {
       type: Boolean,
       default: true
@@ -88,14 +88,14 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-// Hash the password before saving a new password
 userSchema.pre('save', async function () {
-  if (!this.isModified('password')) return;
+  if (!this.isModified('password')) {
+    return;
+  }
 
   this.password = await bcrypt.hash(this.password, 12);
 });
 
-// Compare a submitted password with the stored hash
 userSchema.methods.comparePassword = async function (candidatePassword) {
   return bcrypt.compare(candidatePassword, this.password);
 };

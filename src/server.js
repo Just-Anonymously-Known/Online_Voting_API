@@ -11,8 +11,13 @@ const startServer = async () => {
 
     const app = require('./app');
 
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
+    });
+
+    server.on('error', (error) => {
+      console.error('HTTP server error:', error.message);
+      process.exit(1);
     });
   } catch (error) {
     console.error('Server startup failed:', error.message);

@@ -12,7 +12,8 @@ const upload = multer({
   limits: {
     fileSize: 5 * 1024 * 1024,
     files: 7,
-    fields: 2
+    fields: 10,
+    parts: 20
   },
   fileFilter: (req, file, callback) => {
     if (!ALLOWED_TYPES.has(file.mimetype)) {
@@ -21,7 +22,7 @@ const upload = multer({
       );
     }
 
-    callback(null, true);
+    return callback(null, true);
   }
 });
 
@@ -31,4 +32,6 @@ const candidateMediaUpload = upload.fields([
   { name: 'manifestoImages', maxCount: 5 }
 ]);
 
-module.exports = { candidateMediaUpload };
+module.exports = {
+  candidateMediaUpload
+};

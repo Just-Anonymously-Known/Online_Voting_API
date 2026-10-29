@@ -18,7 +18,7 @@ router.post('/resend-email-code', resendEmailCode);
 router.post('/login', login);
 
 router.get('/me', protect, (req, res) => {
-  res.status(200).json({
+  return res.status(200).json({
     success: true,
     message: 'Authentication successful',
     data: {

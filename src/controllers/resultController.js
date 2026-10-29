@@ -26,27 +26,49 @@ const getElectionResults = async (req, res) => {
     }
 
     const isAdmin = req.user?.role === 'admin';
-    const status = String(election.status || '').toLowerCase();
+    const status = String(election.status || '')
+      .trim()
+      .toLowerCase();
 
-    // Only administrators can monitor results while voting is in progress.
-    // Other authenticated users can view results after completion.
-    if (status !== 'completed' && !isAdmin) {
-      return res.status(403).json({
+    const now = new Date();
+    const start = new Date(election.startDate);
+    const end = new Date(election.endDate);
+
+    if (
+      Number.isNaN(start.getTime()) ||
+      Number.isNaN(end.getTime()) ||
+      end <= start
+    ) {
+      return res.status(400).json({
         success: false,
-        message: 'Election results are available after the election is completed'
+        message: 'Election dates are invalid. Results are unavailable.'
       });
     }
 
-    // Scheduled, draft, cancelled and other non-running elections
-    // must not expose vote counts, even to administrators.
-    if (
-      isAdmin &&
-      status !== 'completed' &&
-      status !== 'active'
-    ) {
+    // Admins may view provisional results only while
+    // the election is active and within its voting window.
+    if (status === 'active') {
+      if (!isAdmin || now < start || now >= end) {
+        return res.status(403).json({
+          success: false,
+          message:
+            'Results are unavailable until the election is completed'
+        });
+      }
+    } else if (status === 'completed') {
+      // Never release final results before the scheduled end date.
+      if (now < end) {
+        return res.status(403).json({
+          success: false,
+          message:
+            'Final results are unavailable before the election end date'
+        });
+      }
+    } else {
+      // Draft, scheduled, cancelled and unknown statuses.
       return res.status(403).json({
         success: false,
-        message: 'Vote counts are available only for active or completed elections'
+        message: 'Results are unavailable for this election'
       });
     }
 
@@ -97,6 +119,8 @@ const getElectionResults = async (req, res) => {
           votes: totalsByCandidate.get(String(candidate._id)) || 0
         }));
 
+        // This is the total number of selections for this position,
+        // not necessarily the number of unique voters.
         const totalVotes = candidateResults.reduce(
           (sum, candidate) => sum + candidate.votes,
           0
@@ -109,7 +133,9 @@ const getElectionResults = async (req, res) => {
           candidates: candidateResults.map((candidate) => ({
             ...candidate,
             percentage: totalVotes > 0
-              ? Number(((candidate.votes / totalVotes) * 100).toFixed(2))
+              ? Number(
+                  ((candidate.votes / totalVotes) * 100).toFixed(2)
+                )
               : 0
           }))
         };
