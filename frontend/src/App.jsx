@@ -8,6 +8,7 @@ import Dashboard from './pages/Dashboard'
 import ElectionDetails from './pages/ElectionDetails'
 import AdminDashboard from './pages/AdminDashboard'
 import AdminElectionDetails from './pages/AdminElectionDetails'
+import CandidateManagement from './pages/CandidateManagement'
 
 function App() {
   return (
@@ -33,6 +34,10 @@ function App() {
       <Route
         path="/admin/elections/:electionId"
         element={<AdminElectionDetails />}
+      />
+      <Route
+        path="/admin/elections/:electionId/positions/:positionId/candidates"
+        element={<CandidateManagement />}
       />
 
       <Route path="*" element={<Navigate to="/login" replace />} />

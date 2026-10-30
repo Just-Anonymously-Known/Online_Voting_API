@@ -148,15 +148,29 @@ function AdminDashboard() {
     return stats
   }, [elections])
 
-  const resultEligibleElections = useMemo(
-    () =>
-      elections.filter((election) =>
-        ['active', 'completed'].includes(
-          String(election.status || '').toLowerCase()
-        )
-      ),
-    [elections]
-  )
+  const resultEligibleElections = useMemo(() => {
+    const now = Date.now()
+
+    return elections.filter((election) => {
+      const status = String(election.status || '').trim().toLowerCase()
+      const start = new Date(election.startDate).getTime()
+      const end = new Date(election.endDate).getTime()
+
+      if (
+        !Number.isFinite(start) ||
+        !Number.isFinite(end) ||
+        end <= start
+      ) {
+        return false
+      }
+
+      // The API permits admins to view active-election results only
+      // while the election is within its scheduled voting window.
+      if (status === 'active') return now >= start && now < end
+      if (status === 'completed') return now >= end
+      return false
+    })
+  }, [elections])
 
   const loadResults = async (electionId) => {
     setSelectedResultsId(electionId)
@@ -208,28 +222,37 @@ function AdminDashboard() {
   }, [resultsData, selectedPositionId])
 
   const positionCandidates = useMemo(() => {
-    const candidates = Array.isArray(selectedPosition?.candidates)
+    const sourceCandidates = Array.isArray(selectedPosition?.candidates)
       ? selectedPosition.candidates
       : []
 
-    const totalVotes = candidates.reduce(
+    const totalVotes = sourceCandidates.reduce(
       (total, candidate) => total + (Number(candidate.votes) || 0),
       0
     )
 
+    const candidates = sourceCandidates
+      .map((candidate) => {
+        const votes = Math.max(0, Number(candidate.votes) || 0)
+
+        return {
+          ...candidate,
+          votes,
+          percentage: totalVotes > 0 ? (votes / totalVotes) * 100 : 0,
+        }
+      })
+      .sort((a, b) => b.votes - a.votes || String(a.name || '').localeCompare(String(b.name || '')))
+
+    const leadingCandidate = candidates[0] && candidates[0].votes > 0
+      ? candidates[0]
+      : null
+
     return {
       totalVotes,
-      candidates: [...candidates]
-        .map((candidate) => {
-          const votes = Number(candidate.votes) || 0
-
-          return {
-            ...candidate,
-            votes,
-            percentage: totalVotes > 0 ? (votes / totalVotes) * 100 : 0,
-          }
-        })
-        .sort((a, b) => b.votes - a.votes),
+      candidateCount: candidates.length,
+      leadingCandidate,
+      leadingPercentage: leadingCandidate ? leadingCandidate.percentage : 0,
+      candidates,
     }
   }, [selectedPosition])
 
@@ -649,17 +672,35 @@ function AdminDashboard() {
 
                   <span
                     className={`admin-status ${
-                      String(resultsData.election?.status).toLowerCase() ===
-                      'completed'
-                        ? 'admin-status-completed'
-                        : 'admin-status-active'
+                      resultsData.provisional
+                        ? 'admin-status-active'
+                        : 'admin-status-completed'
                     }`}
                   >
-                    {String(resultsData.election?.status).toLowerCase() ===
-                    'completed'
-                      ? 'Final results'
-                      : 'Provisional results'}
+                    {resultsData.provisional ? 'Provisional results' : 'Final results'}
                   </span>
+                </div>
+
+                <div className="admin-results-metrics" aria-label="Position result summary">
+                  <article className="admin-results-metric">
+                    <span className="admin-results-metric-label">Candidates</span>
+                    <strong>{selectedPosition ? positionCandidates.candidateCount : '—'}</strong>
+                    <small>In selected position</small>
+                  </article>
+                  <article className="admin-results-metric">
+                    <span className="admin-results-metric-label">Total votes</span>
+                    <strong>{selectedPosition ? positionCandidates.totalVotes.toLocaleString() : '—'}</strong>
+                    <small>Recorded for this position</small>
+                  </article>
+                  <article className="admin-results-metric admin-results-metric-leader">
+                    <span className="admin-results-metric-label">Leading candidate</span>
+                    <strong>{positionCandidates.leadingCandidate?.name || 'No votes yet'}</strong>
+                    <small>
+                      {positionCandidates.leadingCandidate
+                        ? `${positionCandidates.leadingCandidate.percentage.toFixed(1)}% of votes`
+                        : 'No leading candidate'}
+                    </small>
+                  </article>
                 </div>
 
                 {Array.isArray(resultsData.results) &&
@@ -703,6 +744,40 @@ function AdminDashboard() {
                             <span>Total votes</span>
                           </div>
                         </div>
+
+                        {positionCandidates.candidates.length > 0 && (
+                          <div className="admin-results-chart">
+                            <div className="admin-results-chart-heading">
+                              <div>
+                                <h4>Vote distribution</h4>
+                                <p>Share of recorded votes by candidate</p>
+                              </div>
+                              <span>{positionCandidates.totalVotes.toLocaleString()} total</span>
+                            </div>
+
+                            <div className="admin-chart-bars">
+                              {positionCandidates.candidates.map((candidate, index) => (
+                                <div className="admin-chart-row" key={`chart-${String(candidate.candidateId)}`}>
+                                  <div className="admin-chart-label">
+                                    <span className="admin-chart-rank">{index + 1}</span>
+                                    <span className="admin-chart-name" title={candidate.name}>{candidate.name}</span>
+                                    <strong>{candidate.percentage.toFixed(1)}%</strong>
+                                  </div>
+                                  <div
+                                    className="admin-chart-track"
+                                    role="img"
+                                    aria-label={`${candidate.name}: ${candidate.percentage.toFixed(1)} percent`}
+                                  >
+                                    <div
+                                      className={`admin-chart-fill${index === 0 && candidate.votes > 0 ? ' is-leading' : ''}`}
+                                      style={{ width: `${candidate.percentage}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
 
                         {positionCandidates.candidates.length === 0 ? (
                           <p className="admin-empty-state">

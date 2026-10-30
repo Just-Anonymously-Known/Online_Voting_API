@@ -1,21 +1,36 @@
+
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import './AdminElectionDetails.css'
 
 const API_URL = 'https://ballottrust-api.onrender.com/api'
 
-const emptyPositionForm = {
+const EMPTY_POSITION = {
   title: '',
   description: '',
   maxSelections: 1,
 }
 
-const emptyCandidateForm = {
+const EMPTY_CANDIDATE = {
   name: '',
   manifesto: '',
-  photo: null,
-  flyer: null,
-  manifestoImages: [],
+  photoUrl: '',
+}
+
+function getId(item) {
+  return item?._id || item?.id || ''
+}
+
+async function readResponse(response) {
+  const data = await response.json().catch(() => ({}))
+
+  if (!response.ok || data.success === false) {
+    throw new Error(
+      data.message || data.error || `Request failed (${response.status}).`
+    )
+  }
+
+  return data
 }
 
 function AdminElectionDetails() {
@@ -28,18 +43,21 @@ function AdminElectionDetails() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [deletingId, setDeletingId] = useState(null)
-  const [editingId, setEditingId] = useState(null)
   const [activeTab, setActiveTab] = useState('overview')
   const [selectedPositionId, setSelectedPositionId] = useState('')
+  const [selectedCandidate, setSelectedCandidate] = useState(null)
+  const [editingPositionId, setEditingPositionId] = useState(null)
+  const [editingCandidateId, setEditingCandidateId] = useState(null)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
-  const [positionForm, setPositionForm] = useState({ ...emptyPositionForm })
-  const [candidateForm, setCandidateForm] = useState({ ...emptyCandidateForm })
+  const [positionForm, setPositionForm] = useState({ ...EMPTY_POSITION })
+  const [candidateForm, setCandidateForm] = useState({ ...EMPTY_CANDIDATE })
 
   const request = useCallback(
     async (path, options = {}) => {
       const isFormData =
-        typeof FormData !== 'undefined' && options.body instanceof FormData
+        typeof FormData !== 'undefined' &&
+        options.body instanceof FormData
 
       const headers = {
         ...(options.body && !isFormData
@@ -54,37 +72,40 @@ function AdminElectionDetails() {
         headers,
       })
 
-      const data = await response.json().catch(() => ({}))
-
-      if (!response.ok || data.success === false) {
-        throw new Error(
-          data.message || data.error || `Request failed (${response.status}).`,
-        )
-      }
-
-      return data
+      return readResponse(response)
     },
-    [token],
+    [token]
   )
+
+  function clearNotices() {
+    setError('')
+    setMessage('')
+  }
 
   const loadElection = useCallback(async () => {
     setLoading(true)
     setError('')
 
     try {
-      const [electionData, positionsData] = await Promise.all([
+      const [electionResponse, positionsResponse] = await Promise.all([
         request(`/elections/${electionId}`),
         request(`/positions/election/${electionId}`),
       ])
 
-      const loadedElection = electionData.election || electionData
-      const receivedPositions = Array.isArray(positionsData)
-        ? positionsData
-        : positionsData.positions || []
+      const loadedElection =
+        electionResponse.election ||
+        electionResponse.data ||
+        electionResponse
 
-      const positionsWithCandidates = await Promise.all(
+      const receivedPositions = Array.isArray(positionsResponse)
+        ? positionsResponse
+        : positionsResponse.positions ||
+          positionsResponse.data?.positions ||
+          []
+
+      const loadedPositions = await Promise.all(
         receivedPositions.map(async (position) => {
-          const positionId = position._id || position.id
+          const positionId = getId(position)
 
           if (!positionId) {
             return {
@@ -95,22 +116,23 @@ function AdminElectionDetails() {
           }
 
           try {
-            const candidateData = await request(
-              `/elections/${electionId}/positions/${positionId}/candidates`,
+            const response = await request(
+              `/elections/${electionId}/positions/${positionId}/candidates`
             )
+
+            const candidates = Array.isArray(response)
+              ? response
+              : response.candidates ||
+                response.data?.candidates ||
+                []
 
             return {
               ...position,
-              candidates: Array.isArray(candidateData)
-                ? candidateData
-                : candidateData.candidates || [],
+              candidates,
               candidatesLoadError: false,
             }
-          } catch (candidateError) {
-            console.error(
-              `Could not load candidates for position ${positionId}:`,
-              candidateError,
-            )
+          } catch (err) {
+            console.error('Could not load candidates:', err)
 
             return {
               ...position,
@@ -118,23 +140,39 @@ function AdminElectionDetails() {
               candidatesLoadError: true,
             }
           }
-        }),
+        })
       )
 
       setElection(loadedElection)
-      setPositions(positionsWithCandidates)
+      setPositions(loadedPositions)
 
       setSelectedPositionId((currentId) => {
-        const stillExists = positionsWithCandidates.some(
-          (position) => String(position._id || position.id) === currentId,
-        )
+        if (
+          loadedPositions.some(
+            (position) =>
+              String(getId(position)) === String(currentId)
+          )
+        ) {
+          return currentId
+        }
 
-        if (stillExists) return currentId
-
-        const firstPosition = positionsWithCandidates[0]
-        return firstPosition
-          ? String(firstPosition._id || firstPosition.id)
+        return loadedPositions.length
+          ? String(getId(loadedPositions[0]))
           : ''
+      })
+
+      setSelectedCandidate((current) => {
+        if (!current) return null
+
+        for (const position of loadedPositions) {
+          const candidate = position.candidates.find(
+            (item) => String(getId(item)) === String(getId(current))
+          )
+
+          if (candidate) return candidate
+        }
+
+        return null
       })
     } catch (err) {
       setError(err.message || 'Could not load election details.')
@@ -167,55 +205,57 @@ function AdminElectionDetails() {
   }, [navigate])
 
   useEffect(() => {
-    if (token && electionId) {
-      loadElection()
-    }
+    if (token && electionId) loadElection()
   }, [token, electionId, loadElection])
 
   const electionStatus =
     election?.effectiveStatus || election?.status || 'Unknown'
 
-  const canManagePositions = ['draft', 'scheduled'].includes(
-    String(electionStatus).toLowerCase(),
+  const canManage = ['draft', 'scheduled'].includes(
+    String(electionStatus).toLowerCase()
   )
 
   const totalCandidates = useMemo(
     () =>
       positions.reduce(
-        (total, position) =>
-          total + (Array.isArray(position.candidates) ? position.candidates.length : 0),
-        0,
+        (total, position) => total + (position.candidates?.length || 0),
+        0
       ),
-    [positions],
+    [positions]
   )
 
   const selectedPosition = useMemo(
     () =>
       positions.find(
         (position) =>
-          String(position._id || position.id) === selectedPositionId,
+          String(getId(position)) === String(selectedPositionId)
       ) || null,
-    [positions, selectedPositionId],
+    [positions, selectedPositionId]
   )
 
-  function clearNotices() {
-    setError('')
-    setMessage('')
+  function openTab(tab) {
+    clearNotices()
+    setActiveTab(tab)
   }
 
   function resetPositionForm() {
-    setPositionForm({ ...emptyPositionForm })
-    setEditingId(null)
+    setPositionForm({ ...EMPTY_POSITION })
+    setEditingPositionId(null)
+  }
+
+  function resetCandidateForm() {
+    setCandidateForm({ ...EMPTY_CANDIDATE })
+    setEditingCandidateId(null)
   }
 
   function handleEditPosition(position) {
-    setEditingId(position._id || position.id)
+    clearNotices()
+    setEditingPositionId(getId(position))
     setPositionForm({
       title: position.title || '',
       description: position.description || '',
       maxSelections: position.maxSelections ?? 1,
     })
-    clearNotices()
     setActiveTab('positions')
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -246,8 +286,8 @@ function AdminElectionDetails() {
     setSaving(true)
 
     try {
-      if (editingId) {
-        await request(`/positions/${editingId}`, {
+      if (editingPositionId) {
+        await request(`/positions/${editingPositionId}`, {
           method: 'PATCH',
           body: JSON.stringify(payload),
         })
@@ -270,26 +310,32 @@ function AdminElectionDetails() {
   }
 
   async function handleDeletePosition(position) {
-    const positionId = position._id || position.id
+    const positionId = getId(position)
 
     if (!positionId) {
-      setError('This position does not have a valid ID.')
+      setError('Position ID is missing.')
       return
     }
 
-    const confirmed = window.confirm(
-      `Delete "${position.title}"? Make sure this is the correct position.`,
-    )
-
-    if (!confirmed) return
+    if (
+      !window.confirm(
+        `Delete "${position.title}"? This may affect its candidates.`
+      )
+    ) {
+      return
+    }
 
     clearNotices()
     setDeletingId(positionId)
 
     try {
-      await request(`/positions/${positionId}`, { method: 'DELETE' })
+      await request(`/positions/${positionId}`, {
+        method: 'DELETE',
+      })
 
-      if (editingId === positionId) resetPositionForm()
+      if (String(editingPositionId) === String(positionId)) {
+        resetPositionForm()
+      }
 
       setMessage('Position deleted successfully.')
       await loadElection()
@@ -300,32 +346,36 @@ function AdminElectionDetails() {
     }
   }
 
-  function updateCandidateForm(field, value) {
-    setCandidateForm((current) => ({
-      ...current,
-      [field]: value,
-    }))
-  }
-
-  function handleManifestoImagesChange(fileList) {
-    const files = Array.from(fileList || [])
-
-    if (files.length > 5) {
-      setError('Select no more than 5 manifesto images.')
-      updateCandidateForm('manifestoImages', files.slice(0, 5))
+  function handleEditCandidate(candidate) {
+    if (!canManage) {
+      setError('This election does not allow candidate editing.')
       return
     }
 
-    setError('')
-    updateCandidateForm('manifestoImages', files)
+    const candidateId = getId(candidate)
+
+    if (!candidateId) {
+      setError('Candidate ID is missing.')
+      return
+    }
+
+    clearNotices()
+    setEditingCandidateId(String(candidateId))
+    setCandidateForm({
+      name: candidate.name || '',
+      manifesto: candidate.manifesto || '',
+      photoUrl: candidate.photoUrl || '',
+    })
+    setActiveTab('candidates')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  async function handleAddCandidate(event) {
+  async function handleCandidateSubmit(event) {
     event.preventDefault()
     clearNotices()
 
     if (!selectedPositionId) {
-      setError('Select a position before adding a candidate.')
+      setError('Select a position first.')
       return
     }
 
@@ -339,49 +389,101 @@ function AdminElectionDetails() {
       return
     }
 
-    if (candidateForm.manifestoImages.length > 5) {
-      setError('You can upload a maximum of 5 manifesto images.')
+    if (!canManage) {
+      setError('Candidates cannot be changed in this election status.')
       return
+    }
+
+    const payload = {
+      name: candidateForm.name.trim(),
+      manifesto: candidateForm.manifesto.trim(),
+      photoUrl: candidateForm.photoUrl.trim(),
     }
 
     setSaving(true)
 
     try {
-      const body = new FormData()
-      body.append('name', candidateForm.name.trim())
-      body.append('manifesto', candidateForm.manifesto.trim())
+      const editing = Boolean(editingCandidateId)
 
-      if (candidateForm.photo) {
-        body.append('photo', candidateForm.photo)
-      }
+      const endpoint = editing
+        ? `/elections/${electionId}/positions/${selectedPositionId}/candidates/${editingCandidateId}`
+        : `/elections/${electionId}/positions/${selectedPositionId}/candidates`
 
-      if (candidateForm.flyer) {
-        body.append('flyer', candidateForm.flyer)
-      }
-
-      candidateForm.manifestoImages.forEach((file) => {
-        body.append('manifestoImages', file)
+      await request(endpoint, {
+        method: editing ? 'PATCH' : 'POST',
+        body: JSON.stringify(payload),
       })
 
-      await request(
-        `/elections/${electionId}/positions/${selectedPositionId}/candidates`,
-        {
-          method: 'POST',
-          body,
-        },
+      resetCandidateForm()
+      setMessage(
+        editing
+          ? 'Candidate updated successfully.'
+          : 'Candidate added successfully.'
       )
-
-      setCandidateForm({ ...emptyCandidateForm })
-      setMessage('Candidate added successfully.')
       await loadElection()
     } catch (err) {
-      setError(err.message || 'Could not add candidate.')
+      setError(err.message || 'Could not save candidate.')
     } finally {
       setSaving(false)
     }
   }
 
-  if (loading) {
+  async function handleDeleteCandidate(candidate) {
+    const candidateId = getId(candidate)
+
+    if (!candidateId || !selectedPositionId) {
+      setError('Candidate or position ID is missing.')
+      return
+    }
+
+    if (
+      !window.confirm(
+        `Delete "${candidate.name || 'this candidate'}"? This cannot be undone.`
+      )
+    ) {
+      return
+    }
+
+    clearNotices()
+    setDeletingId(candidateId)
+
+    try {
+      await request(
+        `/elections/${electionId}/positions/${selectedPositionId}/candidates/${candidateId}`,
+        { method: 'DELETE' }
+      )
+
+      if (String(getId(selectedCandidate)) === String(candidateId)) {
+        setSelectedCandidate(null)
+      }
+
+      if (String(editingCandidateId) === String(candidateId)) {
+        resetCandidateForm()
+      }
+
+      setMessage('Candidate deleted successfully.')
+      await loadElection()
+    } catch (err) {
+      setError(err.message || 'Could not delete candidate.')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  function goToCandidateManagement(position) {
+    const positionId = getId(position)
+
+    if (!positionId) {
+      setError('Position ID is missing.')
+      return
+    }
+
+    navigate(
+      `/admin/elections/${electionId}/positions/${positionId}/candidates`
+    )
+  }
+
+  if (loading && !election) {
     return (
       <main className="admin-election-page">
         <p>Loading election details...</p>
@@ -393,15 +495,22 @@ function AdminElectionDetails() {
     return (
       <main className="admin-election-page">
         <button
-          className="back-button"
           type="button"
+          className="back-button"
           onClick={() => navigate('/admin/dashboard')}
         >
           ← Back to admin dashboard
         </button>
-        <p className="notice error-message">
-          {error || 'Election not found.'}
-        </p>
+
+        {error && (
+          <p className="notice error-message" role="alert">
+            {error}
+          </p>
+        )}
+
+        <button type="button" onClick={loadElection}>
+          Try again
+        </button>
       </main>
     )
   }
@@ -409,8 +518,8 @@ function AdminElectionDetails() {
   return (
     <main className="admin-election-page">
       <button
-        className="back-button"
         type="button"
+        className="back-button"
         onClick={() => navigate('/admin/dashboard')}
       >
         ← Back to admin dashboard
@@ -420,8 +529,11 @@ function AdminElectionDetails() {
         <p className="eyebrow">BALLOTTRUST ADMIN</p>
         <h1>{election.title || 'Election details'}</h1>
         <p>{election.description || 'No description provided.'}</p>
+
         <span
-          className={`election-status status-${String(electionStatus).toLowerCase()}`}
+          className={`election-status status-${String(
+            electionStatus
+          ).toLowerCase()}`}
         >
           {electionStatus}
         </span>
@@ -439,554 +551,590 @@ function AdminElectionDetails() {
         </div>
       )}
 
-      <nav className="election-tabs" aria-label="Election management sections">
-        <button
-          type="button"
-          className={activeTab === 'overview' ? 'active' : ''}
-          onClick={() => {
-            clearNotices()
-            setActiveTab('overview')
-          }}
-        >
-          Overview
-        </button>
-        <button
-          type="button"
-          className={activeTab === 'positions' ? 'active' : ''}
-          onClick={() => {
-            clearNotices()
-            setActiveTab('positions')
-          }}
-        >
-          Positions
-          <span>{positions.length}</span>
-        </button>
-        <button
-          type="button"
-          className={activeTab === 'candidates' ? 'active' : ''}
-          onClick={() => {
-            clearNotices()
-            setActiveTab('candidates')
-          }}
-        >
-          Candidates
-          <span>{totalCandidates}</span>
-        </button>
-      </nav>
+      <div className="admin-election-layout">
+        <aside className="admin-election-sidebar">
+          <p className="sidebar-label">ELECTION MANAGEMENT</p>
 
-      {activeTab === 'overview' && (
-        <section className="admin-section overview-section">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">ELECTION SUMMARY</p>
-              <h2>Election overview</h2>
-              <p>Review the election before managing positions and candidates.</p>
-            </div>
+          <button
+            type="button"
+            className={activeTab === 'overview' ? 'active' : ''}
+            onClick={() => openTab('overview')}
+          >
+            <span className="sidebar-icon">▦</span>
+            <span>Overview</span>
+          </button>
+
+          <button
+            type="button"
+            className={activeTab === 'positions' ? 'active' : ''}
+            onClick={() => openTab('positions')}
+          >
+            <span className="sidebar-icon">☷</span>
+            <span>Positions</span>
+            <span className="sidebar-count">{positions.length}</span>
+          </button>
+
+          <button
+            type="button"
+            className={activeTab === 'candidates' ? 'active' : ''}
+            onClick={() => openTab('candidates')}
+          >
+            <span className="sidebar-icon">♙</span>
+            <span>Candidates</span>
+            <span className="sidebar-count">{totalCandidates}</span>
+          </button>
+
+          <div className="sidebar-election-status">
+            <span>Status</span>
+            <strong>{electionStatus}</strong>
           </div>
+        </aside>
 
-          <div className="election-summary-grid">
-            <article className="summary-card">
-              <span className="summary-icon">▦</span>
-              <span>Positions</span>
-              <strong>{positions.length}</strong>
-            </article>
-            <article className="summary-card">
-              <span className="summary-icon">♙</span>
-              <span>Candidates</span>
-              <strong>{totalCandidates}</strong>
-            </article>
-            <article className="summary-card">
-              <span className="summary-icon">◷</span>
-              <span>Election status</span>
-              <strong className="summary-status">{electionStatus}</strong>
-            </article>
-          </div>
-
-          <div className="election-information">
-            <h3>Election information</h3>
-            <dl>
-              <div>
-                <dt>Title</dt>
-                <dd>{election.title || 'Not provided'}</dd>
-              </div>
-              <div>
-                <dt>Description</dt>
-                <dd>{election.description || 'No description provided.'}</dd>
-              </div>
-              <div>
-                <dt>Start date</dt>
-                <dd>
-                  {election.startDate
-                    ? new Date(election.startDate).toLocaleString()
-                    : 'Not specified'}
-                </dd>
-              </div>
-              <div>
-                <dt>End date</dt>
-                <dd>
-                  {election.endDate
-                    ? new Date(election.endDate).toLocaleString()
-                    : 'Not specified'}
-                </dd>
-              </div>
-            </dl>
-          </div>
-
-          <div className="overview-actions">
-            <button
-              type="button"
-              onClick={() => setActiveTab('positions')}
-            >
-              Manage positions →
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('candidates')}
-            >
-              View candidates →
-            </button>
-          </div>
-        </section>
-      )}
-
-      {activeTab === 'positions' && (
-        <>
-          <section className="admin-section">
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">POSITION SETUP</p>
-                <h2>{editingId ? 'Edit position' : 'Add a position'}</h2>
-              </div>
-            </div>
-
-            {!canManagePositions ? (
-              <p>
-                Positions can only be created or edited while the election is
-                in draft or scheduled status.
-              </p>
-            ) : (
-              <form onSubmit={handlePositionSubmit} className="admin-form">
-                <label>
-                  Position title
-                  <input
-                    type="text"
-                    value={positionForm.title}
-                    onChange={(event) =>
-                      setPositionForm((current) => ({
-                        ...current,
-                        title: event.target.value,
-                      }))
-                    }
-                    placeholder="e.g. President"
-                    maxLength={100}
-                    required
-                  />
-                </label>
-
-                <label>
-                  Description
-                  <textarea
-                    value={positionForm.description}
-                    onChange={(event) =>
-                      setPositionForm((current) => ({
-                        ...current,
-                        description: event.target.value,
-                      }))
-                    }
-                    placeholder="Describe the position (optional)"
-                    maxLength={500}
-                    rows={3}
-                  />
-                </label>
-
-                <label>
-                  Maximum selections
-                  <input
-                    type="number"
-                    min="1"
-                    step="1"
-                    value={positionForm.maxSelections}
-                    onChange={(event) =>
-                      setPositionForm((current) => ({
-                        ...current,
-                        maxSelections: event.target.value,
-                      }))
-                    }
-                    required
-                  />
-                </label>
-
-                <div className="form-actions">
-                  <button type="submit" disabled={saving}>
-                    {saving
-                      ? 'Saving...'
-                      : editingId
-                        ? 'Save changes'
-                        : 'Add position'}
-                  </button>
-
-                  {editingId && (
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      disabled={saving}
-                      onClick={resetPositionForm}
-                    >
-                      Cancel editing
-                    </button>
-                  )}
+        <div className="admin-election-content">
+          {activeTab === 'overview' && (
+            <section className="admin-section overview-section">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">ELECTION SUMMARY</p>
+                  <h2>Election overview</h2>
+                  <p>
+                    Review your election before managing positions and
+                    candidates.
+                  </p>
                 </div>
-              </form>
-            )}
-          </section>
-
-          <section className="admin-section">
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">YOUR ELECTION</p>
-                <h2>Manage positions</h2>
-                <p>{positions.length} position(s) in this election</p>
               </div>
-            </div>
 
-            {positions.length === 0 ? (
-              <div className="empty-state">
-                <h3>No positions yet</h3>
-                <p>Add your first position using the form above.</p>
+              <div className="election-summary-grid">
+                <article className="summary-card">
+                  <span className="summary-icon">▦</span>
+                  <span>Positions</span>
+                  <strong>{positions.length}</strong>
+                </article>
+
+                <article className="summary-card">
+                  <span className="summary-icon">♙</span>
+                  <span>Candidates</span>
+                  <strong>{totalCandidates}</strong>
+                </article>
+
+                <article className="summary-card">
+                  <span className="summary-icon">◷</span>
+                  <span>Election status</span>
+                  <strong className="summary-status">{electionStatus}</strong>
+                </article>
               </div>
-            ) : (
-              <div className="positions-list">
-                {positions.map((position) => {
-                  const positionId = position._id || position.id
-                  const candidates = Array.isArray(position.candidates)
-                    ? position.candidates
-                    : []
 
-                  return (
-                    <article className="position-card" key={positionId}>
-                      <div className="position-card-heading">
-                        <div>
-                          <h3>{position.title || 'Untitled position'}</h3>
-                          <p>
-                            {position.description ||
-                              'No description provided.'}
-                          </p>
-                        </div>
-                        <span className="count-pill">
-                          {candidates.length}{' '}
-                          {candidates.length === 1 ? 'candidate' : 'candidates'}
-                        </span>
-                      </div>
+              <div className="election-information">
+                <h3>Election information</h3>
 
-                      <p>
-                        Maximum selections:{' '}
-                        <strong>{position.maxSelections ?? 1}</strong>
-                      </p>
+                <dl>
+                  <div>
+                    <dt>Title</dt>
+                    <dd>{election.title || 'Not provided'}</dd>
+                  </div>
+                  <div>
+                    <dt>Description</dt>
+                    <dd>{election.description || 'No description provided.'}</dd>
+                  </div>
+                  <div>
+                    <dt>Start date</dt>
+                    <dd>
+                      {election.startDate
+                        ? new Date(election.startDate).toLocaleString()
+                        : 'Not specified'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>End date</dt>
+                    <dd>
+                      {election.endDate
+                        ? new Date(election.endDate).toLocaleString()
+                        : 'Not specified'}
+                    </dd>
+                  </div>
+                </dl>
+              </div>
 
-                      {position.candidatesLoadError && (
-                        <p className="candidate-load-warning">
-                          Candidate data could not be loaded for this
-                          position. Try refreshing the page.
-                        </p>
-                      )}
+              <div className="overview-actions">
+                <button type="button" onClick={() => openTab('positions')}>
+                  Manage positions →
+                </button>
+                <button type="button" onClick={() => openTab('candidates')}>
+                  Manage candidates →
+                </button>
+              </div>
+            </section>
+          )}
 
-                      <div className="position-actions">
+          {activeTab === 'positions' && (
+            <>
+              <section className="admin-section">
+                <div className="section-heading">
+                  <div>
+                    <p className="eyebrow">POSITION SETUP</p>
+                    <h2>{editingPositionId ? 'Edit position' : 'Add a position'}</h2>
+                  </div>
+                </div>
+
+                {!canManage ? (
+                  <p>
+                    Positions can only be changed while the election is in
+                    draft or scheduled status.
+                  </p>
+                ) : (
+                  <form onSubmit={handlePositionSubmit} className="admin-form">
+                    <label>
+                      Position title
+                      <input
+                        type="text"
+                        value={positionForm.title}
+                        onChange={(event) =>
+                          setPositionForm((current) => ({
+                            ...current,
+                            title: event.target.value,
+                          }))
+                        }
+                        placeholder="e.g. President"
+                        maxLength={100}
+                        required
+                      />
+                    </label>
+
+                    <label>
+                      Description
+                      <textarea
+                        value={positionForm.description}
+                        onChange={(event) =>
+                          setPositionForm((current) => ({
+                            ...current,
+                            description: event.target.value,
+                          }))
+                        }
+                        placeholder="Describe the position"
+                        maxLength={500}
+                        rows={3}
+                      />
+                    </label>
+
+                    <label>
+                      Maximum selections
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={positionForm.maxSelections}
+                        onChange={(event) =>
+                          setPositionForm((current) => ({
+                            ...current,
+                            maxSelections: event.target.value,
+                          }))
+                        }
+                        required
+                      />
+                    </label>
+
+                    <div className="form-actions">
+                      <button type="submit" disabled={saving}>
+                        {saving
+                          ? 'Saving...'
+                          : editingPositionId
+                            ? 'Save changes'
+                            : 'Add position'}
+                      </button>
+
+                      {editingPositionId && (
                         <button
                           type="button"
-                          onClick={() => {
-                            setSelectedPositionId(String(positionId))
-                            setActiveTab('candidates')
-                            clearNotices()
-                          }}
+                          className="secondary-button"
+                          disabled={saving}
+                          onClick={resetPositionForm}
                         >
-                          View candidates
+                          Cancel editing
                         </button>
+                      )}
+                    </div>
+                  </form>
+                )}
+              </section>
 
-                        {canManagePositions && (
-                          <>
+              <section className="admin-section">
+                <div className="section-heading">
+                  <div>
+                    <p className="eyebrow">YOUR ELECTION</p>
+                    <h2>Manage positions</h2>
+                    <p>{positions.length} position(s)</p>
+                  </div>
+                </div>
+
+                {positions.length === 0 ? (
+                  <div className="empty-state">
+                    <h3>No positions yet</h3>
+                    <p>Add your first position using the form above.</p>
+                  </div>
+                ) : (
+                  <div className="positions-list">
+                    {positions.map((position) => {
+                      const positionId = getId(position)
+                      const candidates = position.candidates || []
+
+                      return (
+                        <article className="position-card" key={positionId}>
+                          <div className="position-card-heading">
+                            <div>
+                              <h3>{position.title || 'Untitled position'}</h3>
+                              <p>
+                                {position.description || 'No description provided.'}
+                              </p>
+                            </div>
+
+                            <span className="count-pill">
+                              {candidates.length}{' '}
+                              {candidates.length === 1 ? 'candidate' : 'candidates'}
+                            </span>
+                          </div>
+
+                          <p>
+                            Maximum selections:{' '}
+                            <strong>{position.maxSelections ?? 1}</strong>
+                          </p>
+
+                          {position.candidatesLoadError && (
+                            <p className="candidate-load-warning">
+                              Candidate data could not be loaded for this position.
+                            </p>
+                          )}
+
+                          <div className="position-actions">
+                            <button
+                              type="button"
+                              onClick={() => goToCandidateManagement(position)}
+                            >
+                              Manage candidates →
+                            </button>
+
                             <button
                               type="button"
                               className="secondary-button"
-                              onClick={() => handleEditPosition(position)}
-                              disabled={saving || deletingId === positionId}
+                              onClick={() => {
+                                setSelectedPositionId(String(positionId))
+                                openTab('candidates')
+                              }}
                             >
-                              Edit position
+                              View in this page
                             </button>
-                            <button
-                              type="button"
-                              className="danger-button"
-                              onClick={() => handleDeletePosition(position)}
-                              disabled={saving || deletingId === positionId}
-                            >
-                              {deletingId === positionId
-                                ? 'Deleting...'
-                                : 'Delete position'}
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </article>
-                  )
-                })}
-              </div>
-            )}
-          </section>
-        </>
-      )}
 
-      {activeTab === 'candidates' && (
-        <section className="admin-section">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">CANDIDATE MANAGEMENT</p>
-              <h2>Candidates</h2>
-              <p>Browse candidate profiles and their campaign materials.</p>
-            </div>
-          </div>
+                            {canManage && (
+                              <>
+                                <button
+                                  type="button"
+                                  className="secondary-button"
+                                  onClick={() => handleEditPosition(position)}
+                                >
+                                  Edit position
+                                </button>
 
-          {positions.length === 0 ? (
-            <div className="empty-state">
-              <h3>Create a position first</h3>
-              <p>
-                Candidates must belong to a position. Create one in the
-                Positions tab before adding candidates.
-              </p>
-              <button type="button" onClick={() => setActiveTab('positions')}>
-                Go to positions
-              </button>
-            </div>
-          ) : (
-            <>
-              <label className="position-filter">
-                Filter by position
-                <select
-                  value={selectedPositionId}
-                  onChange={(event) => setSelectedPositionId(event.target.value)}
-                >
-                  {positions.map((position) => (
-                    <option
-                      key={position._id || position.id}
-                      value={String(position._id || position.id)}
-                    >
-                      {position.title || 'Untitled position'}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              {selectedPosition && (
-                <>
-                  <div className="candidate-list-heading">
-                    <div>
-                      <h3>{selectedPosition.title}</h3>
-                      <p>
-                        {selectedPosition.candidates.length}{' '}
-                        {selectedPosition.candidates.length === 1
-                          ? 'candidate'
-                          : 'candidates'}
-                      </p>
-                    </div>
-                  </div>
-
-                  {selectedPosition.candidatesLoadError && (
-                    <p className="notice error-message">
-                      Candidate data could not be loaded. Refresh the page to
-                      try again.
-                    </p>
-                  )}
-
-                  {selectedPosition.candidates.length === 0 ? (
-                    <div className="empty-state">
-                      <h3>No candidates for this position yet</h3>
-                      <p>Add a candidate using the form below.</p>
-                    </div>
-                  ) : (
-                    <div className="candidate-list">
-                      {selectedPosition.candidates.map((candidate) => (
-                        <article
-                          className="candidate-card"
-                          key={candidate._id || candidate.id}
-                        >
-                          <div className="candidate-summary">
-                            {candidate.photoUrl ? (
-                              <img
-                                className="candidate-photo"
-                                src={candidate.photoUrl}
-                                alt={`${candidate.name || 'Candidate'} portrait`}
-                                loading="lazy"
-                              />
-                            ) : (
-                              <div className="candidate-photo candidate-photo-placeholder">
-                                No photo
-                              </div>
+                                <button
+                                  type="button"
+                                  className="danger-button"
+                                  disabled={deletingId === positionId}
+                                  onClick={() => handleDeletePosition(position)}
+                                >
+                                  {deletingId === positionId
+                                    ? 'Deleting...'
+                                    : 'Delete position'}
+                                </button>
+                              </>
                             )}
-
-                            <div className="candidate-details">
-                              <h4>{candidate.name || 'Unnamed candidate'}</h4>
-                              <p className="candidate-manifesto">
-                                {candidate.manifesto ||
-                                  'No manifesto provided.'}
-                              </p>
-                            </div>
                           </div>
+                        </article>
+                      )
+                    })}
+                  </div>
+                )}
+              </section>
+            </>
+          )}
 
-                          {candidate.flyerUrl && (
-                            <div className="candidate-media-block">
-                              <h5>Campaign flyer</h5>
-                              <a
-                                href={candidate.flyerUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                              >
-                                <img
-                                  className="candidate-flyer"
-                                  src={candidate.flyerUrl}
-                                  alt={`${candidate.name || 'Candidate'} campaign flyer`}
-                                  loading="lazy"
-                                />
-                              </a>
-                            </div>
-                          )}
+          {activeTab === 'candidates' && (
+            <section className="admin-section">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">CANDIDATE MANAGEMENT</p>
+                  <h2>Manage candidates</h2>
+                  <p>View and manage candidates for each position.</p>
+                </div>
+              </div>
 
-                          {Array.isArray(candidate.manifestoImages) &&
-                            candidate.manifestoImages.length > 0 && (
-                              <div className="candidate-media-block">
-                                <h5>Manifesto images</h5>
-                                <div className="manifesto-image-grid">
-                                  {candidate.manifestoImages.map(
-                                    (imageUrl, index) => (
-                                      <a
-                                        href={imageUrl}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        key={`${imageUrl}-${index}`}
+              {positions.length === 0 ? (
+                <div className="empty-state">
+                  <h3>No positions available</h3>
+                  <p>Create a position before adding candidates.</p>
+                  <button type="button" onClick={() => openTab('positions')}>
+                    Go to positions
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <label className="position-selector">
+                    Select position
+                    <select
+                      value={selectedPositionId}
+                      onChange={(event) => {
+                        setSelectedPositionId(event.target.value)
+                        resetCandidateForm()
+                        setSelectedCandidate(null)
+                        clearNotices()
+                      }}
+                    >
+                      {positions.map((position) => (
+                        <option key={getId(position)} value={String(getId(position))}>
+                          {position.title || 'Untitled position'}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  {selectedPosition && (
+                    <>
+                      <div className="candidate-position-summary">
+                        <h3>{selectedPosition.title}</h3>
+                        <p>
+                          {selectedPosition.description ||
+                            'No position description provided.'}
+                        </p>
+                        <span className="count-pill">
+                          {selectedPosition.candidates.length}{' '}
+                          {selectedPosition.candidates.length === 1
+                            ? 'candidate'
+                            : 'candidates'}
+                        </span>
+                      </div>
+
+                      {selectedPosition.candidatesLoadError && (
+                        <p className="candidate-load-warning">
+                          Candidates could not be loaded. Refresh election data
+                          and try again.
+                        </p>
+                      )}
+
+                      {selectedPosition.candidates.length === 0 ? (
+                        <div className="empty-state">
+                          <h3>No candidates yet</h3>
+                          <p>Add the first candidate using the form below.</p>
+                        </div>
+                      ) : (
+                        <div className="candidate-list">
+                          {selectedPosition.candidates.map((candidate) => {
+                            const candidateId = getId(candidate)
+
+                            return (
+                              <article className="candidate-card" key={candidateId}>
+                                <div className="candidate-card-main">
+                                  {candidate.photoUrl ? (
+                                    <img
+                                      className="candidate-photo"
+                                      src={candidate.photoUrl}
+                                      alt={`${candidate.name || 'Candidate'} portrait`}
+                                      loading="lazy"
+                                      onError={(event) => {
+                                        event.currentTarget.style.display = 'none'
+                                      }}
+                                    />
+                                  ) : (
+                                    <div className="candidate-photo-placeholder">
+                                      {(candidate.name || 'C').trim().charAt(0).toUpperCase()}
+                                    </div>
+                                  )}
+
+                                  <div className="candidate-card-info">
+                                    <h3>{candidate.name || 'Unnamed candidate'}</h3>
+                                    <p className="candidate-manifesto-preview">
+                                      {candidate.manifesto
+                                        ? candidate.manifesto.length > 180
+                                          ? `${candidate.manifesto.slice(0, 180)}...`
+                                          : candidate.manifesto
+                                        : 'No manifesto provided.'}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div className="candidate-card-actions">
+                                  <button
+                                    type="button"
+                                    className="secondary-button"
+                                    onClick={() => setSelectedCandidate(candidate)}
+                                  >
+                                    View details
+                                  </button>
+
+                                  {canManage && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="secondary-button"
+                                        onClick={() => handleEditCandidate(candidate)}
                                       >
-                                        <img
-                                          src={imageUrl}
-                                          alt={`${candidate.name || 'Candidate'} manifesto image ${index + 1}`}
-                                          loading="lazy"
-                                        />
-                                      </a>
-                                    ),
+                                        Edit candidate
+                                      </button>
+
+                                      <button
+                                        type="button"
+                                        className="danger-button"
+                                        disabled={
+                                          saving ||
+                                          String(deletingId) === String(candidateId)
+                                        }
+                                        onClick={() => handleDeleteCandidate(candidate)}
+                                      >
+                                        {String(deletingId) === String(candidateId)
+                                          ? 'Deleting...'
+                                          : 'Delete candidate'}
+                                      </button>
+                                    </>
                                   )}
                                 </div>
-                              </div>
+                              </article>
+                            )
+                          })}
+                        </div>
+                      )}
+
+                      {canManage && (
+                        <form
+                          className="admin-form candidate-form"
+                          onSubmit={handleCandidateSubmit}
+                        >
+                          <h3>{editingCandidateId ? 'Edit candidate' : 'Add candidate'}</h3>
+                          <p>
+                            Position: <strong>{selectedPosition.title}</strong>
+                          </p>
+
+                          <label>
+                            Candidate name
+                            <input
+                              type="text"
+                              value={candidateForm.name}
+                              onChange={(event) =>
+                                setCandidateForm((current) => ({
+                                  ...current,
+                                  name: event.target.value,
+                                }))
+                              }
+                              placeholder="Full name"
+                              maxLength={120}
+                              required
+                            />
+                          </label>
+
+                          <label>
+                            Manifesto
+                            <textarea
+                              value={candidateForm.manifesto}
+                              onChange={(event) =>
+                                setCandidateForm((current) => ({
+                                  ...current,
+                                  manifesto: event.target.value,
+                                }))
+                              }
+                              placeholder="Candidate's manifesto"
+                              maxLength={3000}
+                              rows={4}
+                            />
+                          </label>
+
+                          <label>
+                            Candidate photo URL
+                            <input
+                              type="url"
+                              value={candidateForm.photoUrl}
+                              onChange={(event) =>
+                                setCandidateForm((current) => ({
+                                  ...current,
+                                  photoUrl: event.target.value,
+                                }))
+                              }
+                              placeholder="https://example.com/photo.jpg"
+                            />
+                          </label>
+
+                          <div className="candidate-form-actions">
+                            <button type="submit" disabled={saving}>
+                              {saving
+                                ? 'Saving...'
+                                : editingCandidateId
+                                  ? 'Save candidate changes'
+                                  : 'Add candidate'}
+                            </button>
+
+                            {editingCandidateId && (
+                              <button
+                                type="button"
+                                className="secondary-button"
+                                disabled={saving}
+                                onClick={resetCandidateForm}
+                              >
+                                Cancel editing
+                              </button>
                             )}
-                        </article>
-                      ))}
-                    </div>
-                  )}
-
-                  {canManagePositions && (
-                    <form
-                      className="admin-form candidate-form"
-                      onSubmit={handleAddCandidate}
-                    >
-                      <h3>Add candidate</h3>
-                      <p>
-                        Adding a candidate to:{' '}
-                        <strong>{selectedPosition.title}</strong>
-                      </p>
-
-                      <label>
-                        Candidate name
-                        <input
-                          type="text"
-                          value={candidateForm.name}
-                          onChange={(event) =>
-                            updateCandidateForm('name', event.target.value)
-                          }
-                          placeholder="Full name"
-                          maxLength={120}
-                          required
-                        />
-                      </label>
-
-                      <label>
-                        Manifesto
-                        <textarea
-                          value={candidateForm.manifesto}
-                          onChange={(event) =>
-                            updateCandidateForm('manifesto', event.target.value)
-                          }
-                          placeholder="Candidate's manifesto (optional)"
-                          maxLength={3000}
-                          rows={4}
-                        />
-                      </label>
-
-                      <label>
-                        Candidate photo (optional)
-                        <input
-                          type="file"
-                          accept="image/jpeg,image/png,image/webp"
-                          onChange={(event) =>
-                            updateCandidateForm(
-                              'photo',
-                              event.target.files?.[0] || null,
-                            )
-                          }
-                        />
-                        {candidateForm.photo && (
-                          <span className="file-selection">
-                            Selected: {candidateForm.photo.name}
-                          </span>
-                        )}
-                      </label>
-
-                      <label>
-                        Campaign flyer (optional)
-                        <input
-                          type="file"
-                          accept="image/jpeg,image/png,image/webp"
-                          onChange={(event) =>
-                            updateCandidateForm(
-                              'flyer',
-                              event.target.files?.[0] || null,
-                            )
-                          }
-                        />
-                        {candidateForm.flyer && (
-                          <span className="file-selection">
-                            Selected: {candidateForm.flyer.name}
-                          </span>
-                        )}
-                      </label>
-
-                      <label>
-                        Manifesto images (up to 5, optional)
-                        <input
-                          type="file"
-                          accept="image/jpeg,image/png,image/webp"
-                          multiple
-                          onChange={(event) =>
-                            handleManifestoImagesChange(event.target.files)
-                          }
-                        />
-                        <span className="field-help">
-                          JPEG, PNG or WebP. Maximum 5 MB per image.
-                        </span>
-                        {candidateForm.manifestoImages.length > 0 && (
-                          <span className="file-selection">
-                            Selected:{' '}
-                            {candidateForm.manifestoImages
-                              .map((file) => file.name)
-                              .join(', ')}
-                          </span>
-                        )}
-                      </label>
-
-                      <button type="submit" disabled={saving}>
-                        {saving ? 'Uploading candidate...' : 'Add candidate'}
-                      </button>
-                    </form>
+                          </div>
+                        </form>
+                      )}
+                    </>
                   )}
                 </>
               )}
-            </>
+
+              {selectedCandidate && (
+                <div
+                  className="candidate-modal-backdrop"
+                  role="presentation"
+                  onMouseDown={(event) => {
+                    if (event.target === event.currentTarget) {
+                      setSelectedCandidate(null)
+                    }
+                  }}
+                >
+                  <section
+                    className="candidate-modal"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="candidate-modal-title"
+                  >
+                    <button
+                      type="button"
+                      className="candidate-modal-close secondary-button"
+                      onClick={() => setSelectedCandidate(null)}
+                    >
+                      Close
+                    </button>
+
+                    <p className="eyebrow">CANDIDATE PROFILE</p>
+                    <h2 id="candidate-modal-title">
+                      {selectedCandidate.name || 'Unnamed candidate'}
+                    </h2>
+                    <p className="candidate-modal-position">
+                      Position: {selectedPosition?.title || 'Not specified'}
+                    </p>
+
+                    {selectedCandidate.photoUrl && (
+                      <img
+                        className="candidate-modal-photo"
+                        src={selectedCandidate.photoUrl}
+                        alt={`${selectedCandidate.name || 'Candidate'} portrait`}
+                      />
+                    )}
+
+                    <h3>Manifesto</h3>
+                    <p className="candidate-modal-manifesto">
+                      {selectedCandidate.manifesto || 'No manifesto provided.'}
+                    </p>
+                  </section>
+                </div>
+              )}
+            </section>
           )}
-        </section>
-      )}
+        </div>
+      </div>
 
       <footer className="admin-election-footer">
         <span>BallotTrust Admin Console</span>
